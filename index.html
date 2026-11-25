@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XManagmentStudio</title>
+<meta name="description" content="Revisá y dejá de seguir cuentas que no te siguen en X, desde tu propia sesión.">
+<style>
+  :root {
+    --bg: #000000;
+    --navy: #0B1F3A;
+    --navy-line: #1E3558;
+    --navy-hover: #123058;
+    --text: #E7E9EA;
+    --muted: #8FA3BF;
+    --warn: #E6C27A;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 48px 16px 64px;
+  }
+  main { max-width: 680px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 4px; letter-spacing: .2px; }
+  h2 { font-size: 16px; font-weight: 600; margin: 36px 0 10px; color: var(--text); }
+  .ver { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); }
+  a { color: #7FB3FF; }
+  .note {
+    border: 1px solid var(--navy-line);
+    border-left: 3px solid var(--warn);
+    background: #05101F;
+    padding: 12px 14px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  .bm {
+    display: inline-block;
+    background: var(--navy);
+    color: var(--text);
+    border: 1px solid #23406B;
+    border-radius: 8px;
+    padding: 10px 18px;
+    text-decoration: none;
+    font-weight: 600;
+    cursor: grab;
+  }
+  .bm:hover { background: var(--navy-hover); }
+  .bm[aria-disabled="true"] { opacity: .4; cursor: default; }
+  ol { padding-left: 20px; margin: 0 0 12px; }
+  li { margin-bottom: 6px; }
+  textarea {
+    width: 100%;
+    height: 160px;
+    background: #030A14;
+    color: var(--muted);
+    border: 1px solid var(--navy-line);
+    border-radius: 6px;
+    padding: 10px;
+    font: 12px/1.4 ui-monospace, Consolas, monospace;
+    resize: vertical;
+  }
+  button {
+    background: var(--navy);
+    color: var(--text);
+    border: 1px solid #23406B;
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  button:hover { background: var(--navy-hover); }
+  code { background: #0A1628; padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+  #status { font-size: 13px; }
+  footer { margin-top: 48px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>XManagmentStudio</h1>
+  <p class="ver">Versión 1.0. Módulo 1, Mi cuenta. Acceso abierto.</p>
+
+  <p>Escanea tu following y tus followers en x.com, arma la lista de cuentas que seguís y no te siguen, y te deja dejar de seguirlas con pausas largas y topes por sesión y por día.</p>
+  <p class="muted">Corre en tu navegador, dentro de tu sesión de X. No usa la API, tokens ni contraseñas. No manda datos a ningún servidor: todo queda en el localStorage de x.com.</p>
+
+  <p class="note">Automatizar acciones puede ir contra las reglas de X y terminar en restricciones o en el cierre de la cuenta. Los valores por defecto son conservadores. Usalo bajo tu responsabilidad.</p>
+
+  <h2>Instalación</h2>
+  <ol>
+    <li>Mostrá la barra de marcadores (Ctrl+Shift+B en Chrome y Edge).</li>
+    <li>Arrastrá este botón a la barra:</li>
+  </ol>
+  <p><a class="bm" id="bookmarklet" href="#" aria-disabled="true">XManagmentStudio</a></p>
+  <p id="status" class="muted">Generando el marcador...</p>
+
+  <h2>Uso</h2>
+  <ol>
+    <li>Entrá a x.com con tu sesión iniciada.</li>
+    <li>Hacé clic en el marcador. Aparece un panel a la derecha.</li>
+    <li>Tocá "Escanear following y followers" y dejá la pestaña abierta hasta que termine.</li>
+    <li>Marcá cuentas en la lista y elegí una de las tres acciones.</li>
+  </ol>
+  <p class="muted">Si el proceso se detiene por una advertencia, revisá tu cuenta antes de tocar "Reanudar cola".</p>
+
+  <h2>Alternativa: consola</h2>
+  <p>Si tu navegador no ejecuta marcadores en x.com, abrí la consola en x.com (F12, pestaña Console), pegá este código y apretá Enter. Chrome puede pedir que escribas <code>allow pasting</code> antes.</p>
+  <textarea id="code" readonly spellcheck="false"></textarea>
+  <button id="copy" type="button">Copiar código</button>
+  <span id="copied" class="muted"></span>
+
+  <footer>
+    Documentación, advertencias y roadmap en el <a id="readme" href="README.md">README</a>.
+  </footer>
+</main>
+
+<script>
+(function () {
+  var FILES = ['config.js', 'xmanagmentstudio.js'];
+  var link = document.getElementById('bookmarklet');
+  var status = document.getElementById('status');
+  var area = document.getElementById('code');
+
+  link.addEventListener('click', function (e) {
+    if (link.getAttribute('aria-disabled') === 'true') { e.preventDefault(); return; }
+    e.preventDefault();
+    status.textContent = 'Arrastralo a la barra de marcadores. Funciona en x.com, no en esta página.';
+  });
+
+  Promise.all(FILES.map(function (f) {
+    return fetch(f, { cache: 'no-cache' }).then(function (r) {
+      if (!r.ok) throw new Error(f + ': HTTP ' + r.status);
+      return r.text();
+    });
+  })).then(function (parts) {
+    var code = parts.join('\n;\n') + '\n;void 0;';
+    link.href = 'javascript:' + encodeURIComponent(code);
+    link.setAttribute('aria-disabled', 'false');
+    area.value = code;
+    status.textContent = 'Listo. ' + Math.round(code.length / 1024) + ' KB.';
+  }).catch(function (err) {
+    status.textContent = 'No se pudieron cargar los scripts (' + err.message + '). Abrí esta página desde GitHub Pages o desde un servidor local, no como archivo.';
+  });
+
+  document.getElementById('copy').addEventListener('click', function () {
+    var out = document.getElementById('copied');
+    if (!area.value) return;
+    var done = function () { out.textContent = ' Copiado.'; };
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(area.value).then(done, function () { area.select(); document.execCommand('copy'); done(); });
+    } else {
+      area.select(); document.execCommand('copy'); done();
+    }
+  });
+})();
+</script>
+</body>
+</html>
