@@ -7,7 +7,7 @@
  * Tiempos en milisegundos salvo que el nombre diga otra cosa.
  */
 window.XMS_CONFIG = {
-  version: '1.0.1',
+  version: '1.0.2',
 
   // Ritmo y pausas
   timing: {
@@ -49,13 +49,10 @@ window.XMS_CONFIG = {
     nav: 'nav',
     header: 'header',
     navLink: 'a[href]',
-    primaryColumn: '[data-testid="primaryColumn"]',
-    userCell: '[data-testid="UserCell"]',
-    userCellLink: 'a[role="link"][href]',
-    followIndicator: '[data-testid="userFollowIndicator"]',
+    main: 'main',
+    avatarImg: 'img[src*="profile_images"]',
+    followingCountLink: 'a[href$="/following"]',
     linkByHref: 'a[href="{path}"]',
-    emptyState: '[data-testid="emptyState"]',
-    profileUserName: '[data-testid="UserName"]',
     profileActions: '[data-testid="placementTracking"]',
     unfollowButton: 'button[data-testid$="-unfollow"]',
     followButton: 'button[data-testid$="-follow"]',
@@ -72,6 +69,10 @@ window.XMS_CONFIG = {
   // aria-label del enlace al perfil propio en la navegacion. Depende del idioma de la interfaz.
   // Se comparan sin distinguir mayusculas.
   profileLabels: ['Perfil', 'Profile'],
+
+  // Texto exacto de la marca de una cuenta que te sigue. Depende del idioma de la interfaz.
+  // Se compara sin espacios en los bordes.
+  followsYouLabels: ['Te sigue', 'Follows you'],
 
   // Rutas de una sola palabra que nunca son un usuario. Se comparan sin distinguir mayusculas.
   reservedPaths: [

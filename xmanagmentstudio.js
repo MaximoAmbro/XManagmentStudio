@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0.1 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.2 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -15,9 +15,25 @@
     window.alert('XManagmentStudio: Abrí x.com con tu sesión iniciada.');
     return;
   }
+  // Instancia previa en la misma pestana. Si es la misma version, se muestra.
+  // Si es otra, se detiene, se quita su panel y sigue la instancia nueva.
+  var replacedVersion = null;
   if (window.__XMS__) {
-    window.__XMS__.show();
-    return;
+    var old = window.__XMS__;
+    if (old.version === C.version) {
+      old.show();
+      return;
+    }
+    replacedVersion = { version: old.version || 'desconocida', clean: !!old.timers };
+    try { if (old.stop) old.stop(); } catch (e) { /* instancia vieja */ }
+    if (old.timers) {
+      Object.keys(old.timers).forEach(function (k) {
+        if (old.timers[k]) clearInterval(old.timers[k]);
+      });
+    }
+    var oldHosts = document.querySelectorAll('#' + C.ui.rootId);
+    for (var oh = 0; oh < oldHosts.length; oh++) oldHosts[oh].parentNode.removeChild(oldHosts[oh]);
+    window.__XMS__ = undefined;
   }
 
   var SEL = C.selectors;
@@ -174,21 +190,23 @@
   /* Bloqueo: un solo proceso activo                                     */
   /* ------------------------------------------------------------------ */
 
-  var heartbeat = null;
+  // Ids de los intervalos activos. Se exponen en window.__XMS__ para poder
+  // detenerlos si otra version reemplaza a esta instancia.
+  var timers = { render: null, heartbeat: null };
 
   function acquireLock() {
     var l = load(K.lock, null);
     if (l && l.id !== INSTANCE_ID && Date.now() - l.ts < C.lockStaleMs) return false;
     save(K.lock, { id: INSTANCE_ID, ts: Date.now() });
-    heartbeat = setInterval(function () {
+    timers.heartbeat = setInterval(function () {
       save(K.lock, { id: INSTANCE_ID, ts: Date.now() });
     }, Math.floor(C.lockStaleMs / 4));
     return true;
   }
 
   function releaseLock() {
-    if (heartbeat) clearInterval(heartbeat);
-    heartbeat = null;
+    if (timers.heartbeat) clearInterval(timers.heartbeat);
+    timers.heartbeat = null;
     var l = load(K.lock, null);
     if (l && l.id === INSTANCE_ID) {
       try { localStorage.removeItem(K.lock); } catch (e) { /* sin acceso */ }
@@ -432,61 +450,145 @@
   /* Escaneo                                                             */
   /* ------------------------------------------------------------------ */
 
+  var followsYouLabels = C.followsYouLabels.map(function (t) { return String(t).trim(); });
+
+  function isFollowsYouText(t) { return followsYouLabels.indexOf(t) !== -1; }
+
+  // Primer elemento dentro de root cuyo texto, sin espacios en los bordes, cumple test.
+  // Recorre nodos de texto para no calcular textContent de cada ancestro.
+  function findExactText(root, test) {
+    if (!root) return null;
+    var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    var node;
+    while ((node = walker.nextNode())) {
+      var t = (node.nodeValue || '').trim();
+      if (!t || !test(t)) continue;
+      var el = node.parentElement;
+      if (!el || el.closest('#' + C.ui.rootId)) continue;
+      if (test((el.textContent || '').trim())) return el;
+    }
+    return null;
+  }
+
+  // Handle de un avatar: primero el alt "@handle", si no sirve el href del enlace mas cercano.
+  function avatarHandle(img) {
+    var alt = (img.getAttribute('alt') || '').trim();
+    if (alt.charAt(0) === '@') {
+      var fromAlt = handleFromHref('/' + alt.slice(1));
+      if (fromAlt) return fromAlt;
+    }
+    var a = img.closest('a');
+    return a ? handleFromHref(a.getAttribute('href')) : null;
+  }
+
+  // Cantidad de handles distintos entre los avatares de el.
+  function countHandles(el) {
+    var seen = {};
+    var n = 0;
+    var imgs = el.querySelectorAll(SEL.avatarImg);
+    for (var i = 0; i < imgs.length; i++) {
+      var hd = avatarHandle(imgs[i]);
+      if (hd && !seen[hd.toLowerCase()]) { seen[hd.toLowerCase()] = true; n++; }
+    }
+    return n;
+  }
+
+  // Contenedor de la cuenta: el ancestro mas alto, dentro de main, con un solo handle distinto.
+  function cellContainer(img, main) {
+    var node = img;
+    while (node.parentElement && node.parentElement !== main && main.contains(node.parentElement)) {
+      if (countHandles(node.parentElement) > 1) break;
+      node = node.parentElement;
+    }
+    return node;
+  }
+
+  // Nombre visible: texto no vacio de un enlace al handle dentro del contenedor.
+  function cellName(box, key) {
+    var links = box.querySelectorAll('a');
+    for (var i = 0; i < links.length; i++) {
+      var hd = handleFromHref(links[i].getAttribute('href'));
+      var text = (links[i].textContent || '').trim();
+      if (hd && hd.toLowerCase() === key && text) return text;
+    }
+    return '';
+  }
+
   function readCells(into) {
-    var col = document.querySelector(SEL.primaryColumn);
-    if (!col) return 0;
-    var cells = col.querySelectorAll(SEL.userCell);
+    var main = document.querySelector(SEL.main);
+    if (!main) return 0;
+    var imgs = main.querySelectorAll(SEL.avatarImg);
     var added = 0;
-    for (var i = 0; i < cells.length; i++) {
-      var links = cells[i].querySelectorAll(SEL.userCellLink);
-      var handle = null, name = '';
-      for (var j = 0; j < links.length; j++) {
-        var m = (links[j].getAttribute('href') || '').match(handleRe);
-        if (m) {
-          handle = m[1];
-          name = (links[j].textContent || '').trim();
-          break;
-        }
-      }
+    for (var i = 0; i < imgs.length; i++) {
+      if (imgs[i].closest('#' + C.ui.rootId)) continue;
+      var handle = avatarHandle(imgs[i]);
       if (!handle) continue;
       var key = handle.toLowerCase();
-      var followsYou = !!cells[i].querySelector(SEL.followIndicator);
+      var box = cellContainer(imgs[i], main);
+      var followsYou = !!findExactText(box, isFollowsYouText);
       if (!into[key]) {
-        into[key] = { handle: handle, name: name, followsYou: followsYou };
+        into[key] = { handle: handle, name: cellName(box, key), followsYou: followsYou };
         added++;
-      } else if (followsYou) {
-        into[key].followsYou = true;
+      } else {
+        if (followsYou) into[key].followsYou = true;
+        if (!into[key].name) into[key].name = cellName(box, key);
       }
     }
     return added;
   }
 
-  // Indica cual selector no encontro nada cuando la lectura de celdas queda vacia.
-  function cellDiag(label) {
+  // Sin stats revisa el DOM de la lista. Con stats resume la verificacion del escaneo.
+  function cellDiag(label, stats) {
     var pre = 'Diagnóstico (' + label + '): ';
-    var col = document.querySelector(SEL.primaryColumn);
-    if (!col) return pre + 'primaryColumn (' + SEL.primaryColumn + ') no encontró nada.';
-    var cells = col.querySelectorAll(SEL.userCell);
-    if (cells.length === 0) {
-      if (col.querySelector(SEL.emptyState)) return pre + 'userCell (' + SEL.userCell + ') no encontró nada. Hay emptyState: la lista figura vacía.';
-      return pre + 'userCell (' + SEL.userCell + ') no encontró nada. Tampoco emptyState (' + SEL.emptyState + ').';
+    if (!stats) {
+      var main = document.querySelector(SEL.main);
+      if (!main) return pre + 'main (' + SEL.main + ') no encontró nada.';
+      var imgs = main.querySelectorAll(SEL.avatarImg);
+      if (imgs.length === 0) return pre + 'avatarImg (' + SEL.avatarImg + ') no encontró nada dentro de main.';
+      var valid = 0;
+      for (var i = 0; i < imgs.length; i++) if (avatarHandle(imgs[i])) valid++;
+      if (valid === 0) return pre + 'avatarImg encontró ' + imgs.length + ' avatares, pero ninguno tiene un handle válido en alt ni en el enlace.';
+      return pre + 'main y avatarImg encontraron ' + imgs.length + ' avatares, ' + valid + ' con handle válido.';
     }
-    var links = 0;
-    for (var i = 0; i < cells.length; i++) links += cells[i].querySelectorAll(SEL.userCellLink).length;
-    if (links === 0) return pre + 'userCellLink (' + SEL.userCellLink + ') no encontró nada en ' + cells.length + ' celdas.';
-    return pre + 'userCellLink encontró ' + links + ' enlaces, pero ninguno cumple handlePattern (' + C.handlePattern + ').';
+    var parts = [stats.read + ' cuentas leídas', stats.marks + ' con marca "' + followsYouLabels.join('" o "') + '"'];
+    parts.push(stats.profileCount === null ? 'contador de Siguiendo no leído' : 'contador de Siguiendo ' + stats.profileCount);
+    if (stats.marks === 0) parts.push('ninguna marca encontrada');
+    return pre + parts.join(', ') + '.';
+  }
+
+  // Digitos iniciales del texto, sin puntos, comas ni espacios. "1.234 Siguiendo" da 1234.
+  function parseCount(text) {
+    var m = String(text || '').replace(/[.,\s]/g, '').match(/^\d+/);
+    return m ? parseInt(m[0], 10) : null;
+  }
+
+  async function readFollowingCount(me) {
+    var path = route('profile', me);
+    var target = route('following', me);
+    navigate(path);
+    var link = await waitFor(function () {
+      if (!samePath(location.pathname, path)) return null;
+      var main = document.querySelector(SEL.main);
+      if (!main) return null;
+      var links = main.querySelectorAll(SEL.followingCountLink);
+      for (var i = 0; i < links.length; i++) {
+        if (samePath(links[i].getAttribute('href') || '', target)) return links[i];
+      }
+      return null;
+    }, T.navTimeout, 'el contador de Siguiendo en tu perfil');
+    return parseCount(link.textContent);
   }
 
   async function scanList(kind, me) {
     var path = route(kind, me);
-    var label = kind === 'following' ? 'following' : 'followers';
+    var label = kind;
     navigate(path);
     await waitFor(function () { return samePath(location.pathname, path); }, T.navTimeout, 'la ruta ' + path);
     await sleep(rand(T.readDelay));
     try {
       await waitFor(function () {
-        var col = document.querySelector(SEL.primaryColumn);
-        return col && (col.querySelector(SEL.userCell) || col.querySelector(SEL.emptyState));
+        var main = document.querySelector(SEL.main);
+        return main && main.querySelector(SEL.avatarImg);
       }, T.navTimeout, 'la lista de ' + label);
     } catch (e) {
       if (!(e instanceof WarnError) && !(e instanceof StopError)) logMsg(cellDiag(label));
@@ -539,29 +641,66 @@
     if (!me) throw new Error(PF_MSG.me);
     logMsg('Escaneando following de @' + me + '.');
     var following = await withRetry('Escaneo following', function () { return scanList('following', me); });
-    logMsg('Following: ' + Object.keys(following).length + ' cuentas. Escaneando followers.');
-    var followers = await withRetry('Escaneo followers', function () { return scanList('followers', me); });
-    logMsg('Followers: ' + Object.keys(followers).length + ' cuentas.');
+    // La cuenta propia no cuenta como seguida.
+    delete following[me.toLowerCase()];
 
+    var keys = Object.keys(following);
+    var mutuals = 0;
     var nonMutuals = [];
-    Object.keys(following).forEach(function (key) {
+    keys.forEach(function (key) {
       var f = following[key];
-      if (followers[key] || f.followsYou) return;
+      if (f.followsYou) { mutuals++; return; }
       nonMutuals.push({ handle: f.handle, name: f.name });
     });
     nonMutuals.sort(function (a, b) { return a.handle.toLowerCase() < b.handle.toLowerCase() ? -1 : 1; });
+    logMsg('Following: ' + keys.length + ' cuentas, ' + mutuals + ' te siguen. Leyendo el contador de tu perfil.');
+
+    var profileCount = null;
+    try {
+      profileCount = await readFollowingCount(me);
+    } catch (e) {
+      if (e instanceof WarnError || e instanceof StopError) throw e;
+      logMsg('No se pudo leer el contador de Siguiendo: ' + e.message);
+    }
+
+    // Verificacion de cordura: sin las dos condiciones no se habilita ninguna accion.
+    var reasons = [];
+    if (mutuals === 0) reasons.push(VERIFY_MSG.noMarks);
+    if (profileCount === null) reasons.push(VERIFY_MSG.noCount);
+    else if (profileCount !== keys.length) {
+      reasons.push('Se leyeron ' + keys.length + ' cuentas y tu perfil dice ' + profileCount + ' siguiendo. Revisá antes de actuar.');
+    }
+    logMsg(cellDiag('following', { read: keys.length, marks: mutuals, profileCount: profileCount }));
 
     var scan = {
       me: me,
       at: new Date().toISOString(),
-      followingCount: Object.keys(following).length,
-      followersCount: Object.keys(followers).length,
-      nonMutuals: nonMutuals
+      followingCount: keys.length,
+      followersCount: null,
+      mutualsCount: mutuals,
+      profileFollowingCount: profileCount,
+      nonMutuals: nonMutuals,
+      verified: reasons.length === 0,
+      verifyReason: reasons.join(' ')
     };
     save(K.scan, scan);
     scanCache = scan;
     selected = {};
-    logMsg('Non-mutuals: ' + nonMutuals.length + '.');
+    if (scan.verified) logMsg('Escaneo verificado. Non-mutuals: ' + nonMutuals.length + '.');
+    else logMsg('Escaneo sin verificar. ' + scan.verifyReason);
+  }
+
+  var VERIFY_MSG = {
+    noMarks: "No se encontró ninguna marca 'Te sigue'. Sin esa marca no se puede verificar a los mutuals.",
+    noCount: 'No se pudo leer el contador de Siguiendo de tu perfil. Revisá antes de actuar.',
+    oldScan: 'El escaneo guardado es de una versión anterior y no está verificado. Escaneá de nuevo.'
+  };
+
+  // Motivo por el que el escaneo no habilita acciones, o '' si esta verificado.
+  function verifyReason(scan) {
+    if (!scan) return 'Primero escaneá tu cuenta.';
+    if (scan.verified === true) return '';
+    return scan.verifyReason || VERIFY_MSG.oldScan;
   }
 
   /* ------------------------------------------------------------------ */
@@ -573,9 +712,9 @@
   }
 
   function profileButtons() {
-    var col = document.querySelector(SEL.primaryColumn);
-    if (!col) return null;
-    var box = col.querySelector(SEL.profileActions);
+    var main = document.querySelector(SEL.main);
+    if (!main) return null;
+    var box = main.querySelector(SEL.profileActions);
     if (!box) return null;
     return {
       unfollow: box.querySelector(SEL.unfollowButton),
@@ -586,19 +725,19 @@
   // Devuelve 'ok' (accion de escritura hecha), 'already' o 'mutual' (sin escritura).
   async function unfollowOne(handle) {
     var path = route('profile', handle);
+    var at = '@' + handle.toLowerCase();
+    var isHandleText = function (t) { return t.toLowerCase() === at; };
     navigate(path);
+    // El perfil cargado tiene que mostrar exactamente "@handle" dentro de main.
     await waitFor(function () {
       if (!samePath(location.pathname, path)) return false;
-      var col = document.querySelector(SEL.primaryColumn);
-      var un = col && col.querySelector(SEL.profileUserName);
-      if (!un || (un.textContent || '').toLowerCase().indexOf('@' + handle.toLowerCase()) === -1) return false;
+      var main = document.querySelector(SEL.main);
+      if (!main || !findExactText(main, isHandleText)) return false;
       var b = profileButtons();
       return b && (b.unfollow || b.follow);
     }, T.navTimeout, 'el perfil de @' + handle);
 
-    var col = document.querySelector(SEL.primaryColumn);
-    var nameBox = col.querySelector(SEL.profileUserName);
-    if (nameBox && nameBox.querySelector(SEL.followIndicator)) return 'mutual';
+    if (findExactText(document.querySelector(SEL.main), isFollowsYouText)) return 'mutual';
 
     var b = profileButtons();
     if (!b.unfollow && b.follow) return 'already';
@@ -778,6 +917,8 @@
     if (run.active) { logMsg('Ya hay un proceso activo.'); return; }
     var check = refreshPreflight();
     if (!check.ok) { logMsg('No se puede iniciar: ' + check.message); render(); return; }
+    var vr = verifyReason(getScan());
+    if (vr) { logMsg('No se puede iniciar: ' + vr); render(); return; }
     var targets = buildTargets(mode);
     if (!targets) { logMsg('Primero escaneá tu cuenta.'); return; }
     if (targets.length === 0) { logMsg('No hay cuentas para procesar con esa opción.'); return; }
@@ -790,6 +931,8 @@
 
   function resumeQueue() {
     if (run.active) return;
+    var vr = verifyReason(getScan());
+    if (vr) { logMsg('No se puede reanudar: ' + vr); render(); return; }
     if (!reconcileQueue()) { logMsg('No hay cola pendiente.'); render(); return; }
     startProcess('queue', processQueue);
   }
@@ -900,7 +1043,8 @@
     ui.pf = h('div', { 'class': 'full' });
 
     ui.scanInfo = h('div', { 'class': 'muted' });
-    ui.btnScan = h('button', { 'class': 'b', text: 'Escanear following y followers', on: { click: function () { startProcess('scan', doScan); } } });
+    ui.verify = h('div');
+    ui.btnScan = h('button', { 'class': 'b', text: 'Escanear following', on: { click: function () { startProcess('scan', doScan); } } });
 
     ui.counter = h('span', { 'class': 'muted' });
     ui.list = h('div', { 'class': 'list' });
@@ -936,7 +1080,8 @@
       ]),
       h('div', { 'class': 'sec' }, [
         h('div', { 'class': 'row' }, [ui.btnScan]),
-        h('div', { style: 'margin-top:6px' }, [ui.scanInfo])
+        h('div', { style: 'margin-top:6px' }, [ui.scanInfo]),
+        h('div', { style: 'margin-top:4px' }, [ui.verify])
       ]),
       h('div', { 'class': 'sec row', style: 'justify-content:space-between' }, [
         h('div', { 'class': 'row' }, [
@@ -1061,10 +1206,21 @@
     if (run.active && run.kind === 'scan') {
       ui.scanInfo.textContent = 'Leyendo ' + run.scanLabel + ': ' + run.scanCount + ' cuentas.';
     } else if (scan) {
-      ui.scanInfo.textContent = '@' + scan.me + '. Following ' + scan.followingCount + ', followers ' + scan.followersCount +
+      ui.scanInfo.textContent = '@' + scan.me + '. Following ' + scan.followingCount +
+        (typeof scan.mutualsCount === 'number' ? ', te siguen ' + scan.mutualsCount : '') +
         ', non-mutuals ' + scan.nonMutuals.length + '. Escaneo: ' + new Date(scan.at).toLocaleString() + '.';
     } else {
       ui.scanInfo.textContent = 'Todavía no escaneaste tu cuenta.';
+    }
+    var vr = scan ? verifyReason(scan) : '';
+    if (!scan || (run.active && run.kind === 'scan')) {
+      ui.verify.textContent = '';
+    } else if (vr) {
+      ui.verify.textContent = 'Sin verificar. ' + vr;
+      ui.verify.className = 's-warn';
+    } else {
+      ui.verify.textContent = 'Verificado: ' + scan.followingCount + ' cuentas leídas, igual que el contador de tu perfil.';
+      ui.verify.className = 'muted';
     }
     var scanAt = scan ? scan.at : null;
     if (scanAt !== lastScanAt) {
@@ -1078,12 +1234,13 @@
 
     var busy = run.active;
     var blocked = !(pf && pf.ok);
+    var unverified = !scan || !!vr;
     ui.btnScan.disabled = busy || blocked;
-    ui.btnAll.disabled = busy || blocked || !scan;
-    ui.btnSel.disabled = busy || blocked || !scan;
-    ui.btnExc.disabled = busy || blocked || !scan;
+    ui.btnAll.disabled = busy || blocked || unverified;
+    ui.btnSel.disabled = busy || blocked || unverified;
+    ui.btnExc.disabled = busy || blocked || unverified;
     ui.btnStop.disabled = !busy;
-    ui.btnResume.disabled = busy || blocked || !(q && q.items.length);
+    ui.btnResume.disabled = busy || blocked || unverified || !(q && q.items.length);
     ui.btnDiscard.disabled = busy || !(q && q.items.length);
   }
 
@@ -1102,8 +1259,12 @@
   reconcileQueue();
 
   buildUI();
+  if (replacedVersion) {
+    logMsg('Se reemplazó la instancia de la versión ' + replacedVersion.version + '.');
+    if (!replacedVersion.clean) logMsg('Esa versión no se puede detener desde acá. Si estaba corriendo un proceso, recargá la pestaña.');
+  }
   render();
-  setInterval(function () { if (ui.host && ui.host.style.display !== 'none') render(); }, 1000);
+  timers.render = setInterval(function () { if (ui.host && ui.host.style.display !== 'none') render(); }, 1000);
 
-  window.__XMS__ = { show: show, hide: hide, version: C.version };
+  window.__XMS__ = { show: show, hide: hide, stop: stopProcess, version: C.version, timers: timers };
 })();

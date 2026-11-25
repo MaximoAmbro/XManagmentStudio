@@ -2,13 +2,23 @@
 
 Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
 
-Versión actual: 1.0.1. Cubre el Módulo 1, Mi cuenta.
+Versión actual: 1.0.2. Cubre el Módulo 1, Mi cuenta.
 
 ## Acceso
 
 Página principal: https://maximoambro.github.io/XManagmentStudio/
 
-La versión 1.0.1 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+La versión 1.0.2 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+
+### Cambios en 1.0.2
+
+Si tenías el marcador de la 1.0.1, borralo y arrastrá el nuevo. Si la pestaña de x.com tenía abierto el panel de la 1.0.1, recargala antes de usar el marcador nuevo. Desde la 1.0.2, una versión nueva reemplaza sola a la anterior en la misma pestaña.
+
+- El escaneo ya no lee la lista de followers. Lee solo tu following y toma como mutual a cada cuenta que tiene la marca "Te sigue" (o "Follows you"). Las etiquetas están en `followsYouLabels` de `config.js`.
+- Las cuentas se leen por la imagen de avatar (`img[src*="profile_images"]`) dentro de `main`, porque X quitó los `data-testid` de la lista.
+- Verificación de cordura: el escaneo queda verificado solo si encontró al menos una marca "Te sigue" y si la cantidad de cuentas leídas coincide con el contador "Siguiendo" de tu perfil. Si no, las tres acciones y "Reanudar cola" quedan deshabilitadas y el panel muestra el motivo.
+- Un escaneo guardado por una versión anterior no está verificado. Hay que escanear de nuevo antes de actuar.
+- Antes de dejar de seguir, el script confirma que el perfil abierto muestra "@cuenta" y que no tiene la marca "Te sigue".
 
 ### Cambios en 1.0.1
 
@@ -55,8 +65,8 @@ y abrí `http://localhost:8000`.
 
 1. Entrá a x.com con tu sesión iniciada.
 2. Hacé clic en el marcador. Se abre un panel a la derecha con el chequeo de sesión. Si dice "Sesión detectada: @tuusuario.", podés seguir. Si muestra otro mensaje, resolvé lo que indica; los botones quedan bloqueados hasta entonces.
-3. Tocá "Escanear following y followers". El script recorre `/{usuario}/following` y después `/{usuario}/followers`, con desplazamiento automático hasta el final. Dejá la pestaña abierta y visible.
-4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no te siguen.
+3. Tocá "Escanear following". El script recorre `/{usuario}/following` con desplazamiento automático hasta el final y después abre tu perfil para leer el contador "Siguiendo". No lee la lista de followers. Dejá la pestaña abierta y visible.
+4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no tienen la marca "Te sigue". Debajo aparece si el escaneo quedó verificado o el motivo por el que no. Sin verificación, las acciones no se habilitan.
 5. Marcá cuentas con los checkboxes. Hay botones para seleccionar y deseleccionar todo, y un contador de seleccionadas.
 6. Elegí una acción:
    - Dejar de seguir a todos los non-mutuals.
@@ -65,7 +75,7 @@ y abrí `http://localhost:8000`.
 
 El botón de la acción es la única confirmación. Al tocarlo, se arma la cola y arranca.
 
-Para cada cuenta, el script abre su perfil, verifica que la seguís y que no te sigue, toca "Siguiendo" y confirma. Si la cuenta te sigue desde el escaneo, se omite.
+Para cada cuenta, el script abre su perfil, confirma que muestra "@cuenta", verifica que la seguís y que no tiene la marca "Te sigue", toca "Siguiendo" y confirma. Si la cuenta te sigue desde el escaneo, se omite.
 
 ### Barra de estado
 
@@ -133,10 +143,10 @@ El historial se escribe antes de sacar la cuenta de la cola. Si algo corta entre
 `config.js` concentra:
 
 - selectores del DOM de X;
-- rutas de following, followers y perfil;
+- rutas de following y perfil (la de followers queda, sin uso desde la 1.0.2);
 - textos que cuentan como advertencia, en español e inglés;
 - rutas que cuentan como redirección a verificación;
-- etiquetas del enlace al perfil propio (`profileLabels`) y rutas que nunca son un usuario (`reservedPaths`);
+- etiquetas del enlace al perfil propio (`profileLabels`), de la marca "Te sigue" (`followsYouLabels`) y rutas que nunca son un usuario (`reservedPaths`);
 - rangos de pausas, reintentos y tiempos de espera;
 - topes por defecto;
 - claves de almacenamiento.
@@ -156,10 +166,12 @@ Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores
 
 - Si la ventana es muy angosta, X esconde el enlace al perfil y el chequeo de sesión falla. Agrandá la ventana.
 - Los `aria-label` dependen del idioma de la interfaz de X. Si usás un idioma distinto de español o inglés, agregá la etiqueta del enlace al perfil en `profileLabels`.
-- Depende del DOM de X. Si X cambia los `data-testid`, el escaneo o la acción fallan hasta actualizar `config.js`.
-- El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos por lista.
+- Depende del DOM de X. Si X cambia los selectores, el escaneo o la acción fallan hasta actualizar `config.js`.
+- Los textos "Te sigue" y "Siguiendo" dependen del idioma de la interfaz. Si usás otro idioma, agregá la marca en `followsYouLabels`.
+- Si el contador del perfil está abreviado (por ejemplo "1,2 mil"), no coincide con lo leído y el escaneo queda sin verificar.
+- El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos.
 - La detección de 429 se apoya en observar `fetch` y `XMLHttpRequest` de la página. Si X cambia cómo hace sus llamadas, queda la detección por mensajes y redirecciones.
-- X no siempre muestra la lista completa de followers. Por eso, una cuenta que en tu lista de following figura con "Te sigue" no se toma como non-mutual aunque no aparezca en followers.
+- Si X deja de mostrar la marca "Te sigue" en una cuenta que sí te sigue, esa cuenta aparece como non-mutual. El chequeo en su perfil antes de dejar de seguir la vuelve a revisar.
 
 ## Roadmap
 
