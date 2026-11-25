@@ -7,7 +7,7 @@
  * Tiempos en milisegundos salvo que el nombre diga otra cosa.
  */
 window.XMS_CONFIG = {
-  version: '1.0.3',
+  version: '1.0.4',
 
   // Ritmo y pausas
   timing: {
@@ -37,7 +37,9 @@ window.XMS_CONFIG = {
     scrollFactor: 0.85,      // fraccion de la altura de la ventana por desplazamiento
     endRetries: 4,           // intentos extra al llegar al final si faltan cuentas
     endWaitRange: { min: 5000, max: 10000 }, // espera entre intentos extra
-    secondPass: true         // segunda pasada completa para releer marcas y cuentas
+    secondPass: true,        // segunda pasada completa para releer marcas y cuentas
+    networkRetries: 3,       // reintentos ante un error de red durante la lectura
+    networkWaitRange: { min: 3000, max: 8000 } // espera entre reintentos de red
   },
 
   // Rutas de x.com. {user} se reemplaza por el nombre de usuario.
@@ -76,6 +78,10 @@ window.XMS_CONFIG = {
   // Texto exacto de la marca de una cuenta que te sigue. Depende del idioma de la interfaz.
   // Se compara sin espacios en los bordes.
   followsYouLabels: ['Te sigue', 'Follows you'],
+
+  // Texto exacto del boton o enlace "Siguiendo" en cada fila de la lista de following.
+  // Un avatar sin ese boton cerca no cuenta como cuenta de la lista. Depende del idioma.
+  followingLabels: ['Siguiendo', 'Following'],
 
   // Rutas de una sola palabra que nunca son un usuario. Se comparan sin distinguir mayusculas.
   reservedPaths: [

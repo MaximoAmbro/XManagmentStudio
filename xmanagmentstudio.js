@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0.3 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.4 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -217,15 +217,32 @@
   /* Observacion de red                                                  */
   /* ------------------------------------------------------------------ */
 
-  var net = { watching: false, flag: null };
+  // kind: 'network' (error de red) o '429'. Durante un escaneo, los errores de red
+  // no frenan el proceso: los toma scanPass y reintenta.
+  var net = { watching: false, flag: null, kind: null };
 
   function watchedUrl(url) {
     url = String(url || '');
     return C.network.watchPatterns.some(function (p) { return url.indexOf(p) !== -1; });
   }
 
-  function flagNet(reason) {
-    if (net.watching && !net.flag) net.flag = reason;
+  function flagNet(reason, kind) {
+    if (!net.watching) return;
+    // Un 429 reemplaza a un error de red pendiente: siempre tiene que frenar.
+    if (!net.flag || (net.kind === 'network' && kind === '429')) {
+      net.flag = reason;
+      net.kind = kind;
+    }
+  }
+
+  function clearNetFlag() { net.flag = null; net.kind = null; }
+
+  // Error de red pendiente durante un escaneo. Lo consume y lo devuelve, o null.
+  function takeScanNetError() {
+    if (run.kind !== 'scan' || !net.flag || net.kind !== 'network') return null;
+    var r = net.flag;
+    clearNetFlag();
+    return r;
   }
 
   (function patchNetwork() {
@@ -234,10 +251,10 @@
       window.fetch = function (input) {
         var url = typeof input === 'string' ? input : (input && input.url);
         return origFetch.apply(this, arguments).then(function (res) {
-          if (res && res.status === 429 && watchedUrl(url)) flagNet('HTTP 429 en ' + shortUrl(url));
+          if (res && res.status === 429 && watchedUrl(url)) flagNet('HTTP 429 en ' + shortUrl(url), '429');
           return res;
         }, function (err) {
-          if (err && err.name !== 'AbortError' && watchedUrl(url)) flagNet('Error de red en ' + shortUrl(url));
+          if (err && err.name !== 'AbortError' && watchedUrl(url)) flagNet('Error de red en ' + shortUrl(url), 'network');
           throw err;
         });
       };
@@ -252,10 +269,10 @@
       var xhr = this;
       if (watchedUrl(xhr.__xmsUrl)) {
         xhr.addEventListener('load', function () {
-          if (xhr.status === 429) flagNet('HTTP 429 en ' + shortUrl(xhr.__xmsUrl));
+          if (xhr.status === 429) flagNet('HTTP 429 en ' + shortUrl(xhr.__xmsUrl), '429');
         });
         xhr.addEventListener('error', function () {
-          flagNet('Error de red en ' + shortUrl(xhr.__xmsUrl));
+          flagNet('Error de red en ' + shortUrl(xhr.__xmsUrl), 'network');
         });
       }
       return XS.apply(this, arguments);
@@ -279,7 +296,9 @@
   var warnTexts = C.warningTexts.map(function (t) { return t.toLowerCase(); });
 
   function detectWarning() {
-    if (net.flag) return net.flag;
+    // En el escaneo, un error de red no es advertencia: lo reintenta scanPass.
+    // En las acciones de dejar de seguir sigue frenando como antes.
+    if (net.flag && !(run.kind === 'scan' && net.kind === 'network')) return net.flag;
     var path = location.pathname;
     for (var i = 0; i < blockedRe.length; i++) {
       if (blockedRe[i].test(path)) return 'Redirección a ' + path;
@@ -514,7 +533,26 @@
     return '';
   }
 
-  function readCells(into) {
+  var followingLabels = C.followingLabels.map(function (t) { return String(t).trim(); });
+  var ROW_ANCESTORS = 8;
+
+  // La fila es de la lista si, subiendo hasta ocho ancestros sin salir del contenedor
+  // de la cuenta, hay un boton o enlace con texto exacto "Siguiendo".
+  function hasFollowingButton(img, box) {
+    var node = img;
+    for (var i = 0; i < ROW_ANCESTORS && node !== box; i++) {
+      node = node.parentElement;
+      if (!node) break;
+    }
+    var els = node ? node.querySelectorAll('button, a, [role="button"]') : [];
+    for (var j = 0; j < els.length; j++) {
+      if (followingLabels.indexOf((els[j].textContent || '').trim()) !== -1) return true;
+    }
+    return false;
+  }
+
+  // ignored (opcional) junta los handles de avatares descartados por no tener el boton.
+  function readCells(into, ignored) {
     var main = document.querySelector(SEL.main);
     if (!main) return 0;
     var imgs = main.querySelectorAll(SEL.avatarImg);
@@ -525,6 +563,10 @@
       if (!handle) continue;
       var key = handle.toLowerCase();
       var box = cellContainer(imgs[i], main);
+      if (!hasFollowingButton(imgs[i], box)) {
+        if (ignored) ignored[key] = handle;
+        continue;
+      }
       var followsYou = !!findExactText(box, isFollowsYouText);
       if (!into[key]) {
         into[key] = { handle: handle, name: cellName(box, key), followsYou: followsYou };
@@ -610,13 +652,16 @@
 
   // Una pasada completa desde el inicio de la pagina. Lee en un mapa propio, para que las
   // rondas sin cuentas nuevas se cuenten dentro de la pasada, y fusiona en all.
+  // Devuelve { seen, incomplete }: incomplete es true si se agotaron los reintentos de red.
   async function scanPass(pass, all, total, me) {
     var tag = 'Pasada ' + pass;
     var seen = {};
+    var ignored = {};
     var skipKey = me.toLowerCase();
     // Devuelve cuantas cuentas lleva leidas esta pasada.
     var read = function () {
-      readCells(seen);
+      readCells(seen, ignored);
+      delete seen[skipKey];
       mergeAccounts(all, seen, skipKey);
       return Object.keys(seen).length;
     };
@@ -625,42 +670,64 @@
       run.scanPass = pass;
       render();
     };
-    var count = function () { return Object.keys(all).length; };
 
     window.scrollTo(0, 0);
     await sleep(rand(T.readDelay));
 
     var stall = 0;
     var extra = 0;
+    var netTries = 0;
     var lastSeen = 0;
+    var incomplete = false;
     var reason = 'corte de seguridad (' + C.scan.maxRounds + ' rondas)';
     for (var round = 1; round <= C.scan.maxRounds; round++) {
+      // Error de red pendiente: se espera y se vuelve a leer la misma posicion.
+      var netErr = takeScanNetError();
+      if (netErr) {
+        netTries++;
+        if (netTries > C.scan.networkRetries) {
+          incomplete = true;
+          reason = 'error de red repetido, se agotaron los ' + C.scan.networkRetries + ' reintentos';
+          logMsg(tag + ', ronda ' + round + ': ' + netErr + '. Sin reintentos disponibles. La pasada queda incompleta.');
+          break;
+        }
+        logMsg(tag + ', ronda ' + round + ': ' + netErr + '. Reintento de red ' + netTries + ' de ' + C.scan.networkRetries + '.');
+        await sleep(rand(C.scan.networkWaitRange), 'Reintento de red');
+        continue;
+      }
+
       var nowSeen = read();
       var added = nowSeen - lastSeen;
       lastSeen = nowSeen;
+      netTries = 0;
       progress();
       if (added === 0) stall++; else stall = 0;
       var atBottom = isAtBottom();
       if (added === 0) {
-        logMsg(tag + ', ronda ' + round + ' sin cuentas nuevas: leídas ' + count() + ' de ' + fmtTotal(total) +
+        logMsg(tag + ', ronda ' + round + ' sin cuentas nuevas: leídas ' + nowSeen + ' de ' + fmtTotal(total) +
           ', al final: ' + (atBottom ? 'sí' : 'no') + '.');
       }
+      // a. Llego al contador (o lo paso) y la ultima ronda no agrego cuentas.
+      if (total !== null && nowSeen >= total && added === 0) {
+        reason = nowSeen === total ? 'la cantidad llegó al contador' : 'la cantidad pasó el contador';
+        break;
+      }
       if (stall >= C.scan.maxStallRounds && atBottom) {
-        if (total !== null && count() < total && extra < C.scan.endRetries) {
+        if (total !== null && extra < C.scan.endRetries) {
           extra++;
           window.scrollTo(0, document.documentElement.scrollHeight);
           await sleep(rand(C.scan.endWaitRange), 'Espera al final');
+          if (net.flag && net.kind === 'network') { stall = 0; continue; }
           var got = read() - lastSeen;
           lastSeen += got;
           progress();
           logMsg(tag + ', intento extra ' + extra + ' de ' + C.scan.endRetries + ': ' + got + ' cuentas nuevas en la pasada, leídas ' +
-            count() + ' de ' + fmtTotal(total) + '.');
+            lastSeen + ' de ' + fmtTotal(total) + '.');
           if (got > 0) stall = 0;
           continue;
         }
-        if (total === null) reason = 'llegó al final, sin contador para comparar';
-        else if (count() >= total) reason = 'la cantidad coincide con el contador';
-        else reason = 'llegó al final y se agotaron los intentos extra';
+        // b. Al final de la pagina, sin intentos extra disponibles (o sin contador).
+        reason = total === null ? 'llegó al final, sin contador para comparar' : 'llegó al final y se agotaron los intentos extra';
         break;
       }
       if (stall >= C.scan.maxStallRounds * 3) {
@@ -670,11 +737,28 @@
       window.scrollBy(0, Math.floor(window.innerHeight * C.scan.scrollFactor));
       await sleep(rand(T.readDelay), 'Lectura');
     }
-    read();
+    if (!incomplete) read();
     progress();
-    logMsg(tag + ' terminada: leídas ' + count() + ' de ' + fmtTotal(total) + '. Motivo: ' + reason + '.');
+
+    var n = Object.keys(seen).length;
+    var ign = Object.keys(ignored).filter(function (k) { return !seen[k]; }).length;
+    logMsg(tag + ' terminada: ' + n + ' cuentas leídas en la pasada, ' + Object.keys(all).length + ' en total, contador ' +
+      fmtTotal(total) + '. Motivo: ' + reason + '.');
+    logMsg(tag + ': ' + ign + ' avatares ignorados sin botón "' + followingLabels.join('" o "') + '" en su fila.');
+    if (total !== null && n > total) {
+      logMsg(tag + ': leídas ' + n + ', contador ' + total + ', exceso ' + (n - total) + '.');
+    }
+    return { seen: seen, incomplete: incomplete };
   }
 
+  // Handles que estan en a y no en b, hasta max, para el log.
+  function onlyIn(a, b, max) {
+    var keys = Object.keys(a).filter(function (k) { return !b[k]; });
+    var list = keys.slice(0, max).map(function (k) { return '@' + a[k].handle; });
+    return { count: keys.length, list: list };
+  }
+
+  // Devuelve { found, incomplete }.
   async function scanList(kind, me, total) {
     var path = route(kind, me);
     var label = kind;
@@ -693,16 +777,25 @@
 
     var found = {};
     run.scanLabel = label;
-    await scanPass(1, found, total, me);
-    if (C.scan.secondPass) {
-      var before = Object.keys(found).length;
+    var p1 = await scanPass(1, found, total, me);
+    var incomplete = p1.incomplete;
+    if (C.scan.secondPass && !incomplete) {
       var marksBefore = countMarks(found);
-      await scanPass(2, found, total, me);
-      logMsg('Segunda pasada: ' + (Object.keys(found).length - before) + ' cuentas y ' +
-        (countMarks(found) - marksBefore) + ' marcas "Te sigue" que no estaban en la primera.');
+      var p2 = await scanPass(2, found, total, me);
+      incomplete = p2.incomplete;
+      var only1 = onlyIn(p1.seen, p2.seen, 20);
+      var only2 = onlyIn(p2.seen, p1.seen, 20);
+      logMsg('Fusión: ' + only1.count + ' cuentas solo en la primera pasada' + (only1.count ? ' (' + only1.list.join(', ') +
+        (only1.count > 20 ? ', ...' : '') + ')' : '') + '.');
+      logMsg('Fusión: ' + only2.count + ' cuentas solo en la segunda pasada' + (only2.count ? ' (' + only2.list.join(', ') +
+        (only2.count > 20 ? ', ...' : '') + ')' : '') + '.');
+      logMsg('Segunda pasada: ' + (countMarks(found) - marksBefore) + ' marcas "Te sigue" que no estaban en la primera. Total fusionado: ' +
+        Object.keys(found).length + '.');
+    } else if (C.scan.secondPass) {
+      logMsg('La segunda pasada no se hizo porque la primera quedó incompleta.');
     }
     if (Object.keys(found).length === 0) logMsg(cellDiag(label));
-    return found;
+    return { found: found, incomplete: incomplete };
   }
 
   async function withRetry(context, fn) {
@@ -724,23 +817,29 @@
     }
   }
 
+  // Lee el contador sin cortar el escaneo si falla. Devuelve el numero o null.
+  async function tryFollowingCount(me) {
+    try {
+      return await readFollowingCount(me);
+    } catch (e) {
+      if (e instanceof WarnError || e instanceof StopError) throw e;
+      logMsg('No se pudo leer el contador de Siguiendo: ' + e.message);
+      return null;
+    }
+  }
+
   async function doScan() {
     var me = run.me;
     if (!me) throw new Error(PF_MSG.me);
     // El contador se lee antes de escanear: da el total para el progreso y los intentos extra.
     run.scanLabel = 'contador';
     logMsg('Leyendo el contador de Siguiendo de tu perfil.');
-    var profileCount = null;
-    try {
-      profileCount = await readFollowingCount(me);
-    } catch (e) {
-      if (e instanceof WarnError || e instanceof StopError) throw e;
-      logMsg('No se pudo leer el contador de Siguiendo: ' + e.message);
-    }
+    var profileCount = await tryFollowingCount(me);
     run.scanTotal = profileCount;
     logMsg('Contador de Siguiendo: ' + fmtTotal(profileCount) + '. Escaneando following de @' + me + '.');
 
-    var following = await withRetry('Escaneo following', function () { return scanList('following', me, profileCount); });
+    var result = await withRetry('Escaneo following', function () { return scanList('following', me, profileCount); });
+    var following = result.found;
     // La cuenta propia no cuenta como seguida.
     delete following[me.toLowerCase()];
 
@@ -755,12 +854,23 @@
     nonMutuals.sort(function (a, b) { return a.handle.toLowerCase() < b.handle.toLowerCase() ? -1 : 1; });
     logMsg('Following: ' + keys.length + ' cuentas, ' + mutuals + ' te siguen.');
 
-    // Verificacion de cordura, despues de las dos pasadas y de los intentos extra: sin las dos condiciones no se habilita ninguna accion.
+    // Contador al final, para detectar cambios durante el escaneo.
+    run.scanLabel = 'contador';
+    logMsg('Releyendo el contador de Siguiendo de tu perfil.');
+    var endCount = await tryFollowingCount(me);
+    logMsg('Contador al inicio: ' + fmtTotal(profileCount) + '. Contador al final: ' + fmtTotal(endCount) + '.');
+
+    // Verificacion de cordura, despues de las dos pasadas y de los intentos extra.
+    // Las cuentas fusionadas tienen que ser exactamente iguales al contador.
     var reasons = [];
     if (mutuals === 0) reasons.push(VERIFY_MSG.noMarks);
-    if (profileCount === null) reasons.push(VERIFY_MSG.noCount);
-    else if (profileCount !== keys.length) {
-      reasons.push('Se leyeron ' + keys.length + ' cuentas y tu perfil dice ' + profileCount + ' siguiendo. Revisá antes de actuar.');
+    if (result.incomplete) reasons.push(VERIFY_MSG.network);
+    if (profileCount === null || endCount === null) reasons.push(VERIFY_MSG.noCount);
+    else {
+      if (profileCount !== keys.length) {
+        reasons.push('Se leyeron ' + keys.length + ' cuentas y tu perfil dice ' + profileCount + ' siguiendo. Revisá antes de actuar.');
+      }
+      if (endCount !== profileCount) reasons.push(VERIFY_MSG.countChanged);
     }
     logMsg(cellDiag('following', { read: keys.length, marks: mutuals, profileCount: profileCount }));
 
@@ -771,6 +881,7 @@
       followersCount: null,
       mutualsCount: mutuals,
       profileFollowingCount: profileCount,
+      profileFollowingCountEnd: endCount,
       nonMutuals: nonMutuals,
       verified: reasons.length === 0,
       verifyReason: reasons.join(' ')
@@ -785,7 +896,9 @@
   var VERIFY_MSG = {
     noMarks: "No se encontró ninguna marca 'Te sigue'. Sin esa marca no se puede verificar a los mutuals.",
     noCount: 'No se pudo leer el contador de Siguiendo de tu perfil. Revisá antes de actuar.',
-    oldScan: 'El escaneo guardado es de una versión anterior y no está verificado. Escaneá de nuevo.'
+    oldScan: 'El escaneo guardado es de una versión anterior y no está verificado. Escaneá de nuevo.',
+    network: 'Error de red repetido al leer la lista.',
+    countChanged: 'El contador de Siguiendo cambió durante el escaneo. Volvé a escanear.'
   };
 
   // Motivo por el que el escaneo no habilita acciones, o '' si esta verificado.
@@ -980,7 +1093,7 @@
     run.active = true;
     run.kind = kind;
     run.stopRequested = false;
-    net.flag = null;
+    clearNetFlag();
     net.watching = true;
     setStatus('running', '');
     try {

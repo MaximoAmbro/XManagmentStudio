@@ -2,13 +2,25 @@
 
 Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
 
-Versión actual: 1.0.3. Cubre el Módulo 1, Mi cuenta.
+Versión actual: 1.0.4. Cubre el Módulo 1, Mi cuenta.
 
 ## Acceso
 
 Página principal: https://maximoambro.github.io/XManagmentStudio/
 
-La versión 1.0.3 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+La versión 1.0.4 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+
+### Cambios en 1.0.4
+
+Si tenías el marcador de la 1.0.3, borralo y arrastrá el nuevo. Cualquier cambio en `config.js` o en el script obliga a arrastrar el marcador otra vez. Si la pestaña tenía abierto el panel de la 1.0.3, el marcador nuevo lo reemplaza solo.
+
+- Fin de la pasada: termina cuando las cuentas leídas llegan al contador o lo pasan y la última ronda no agregó cuentas, o cuando se agotan los intentos extra al final de la página. Ya no depende de que la cantidad sea exactamente igual. Si se leen más cuentas que el contador, el log registra el exceso.
+- Verificación: el escaneo queda verificado solo si las cuentas fusionadas son exactamente iguales al contador.
+- Un error de red mientras se lee la lista ya no frena el escaneo. Se reintenta hasta 3 veces, con una espera de 3 a 8 segundos (`scan.networkRetries` y `scan.networkWaitRange`). Si se agotan, la pasada queda incompleta y el escaneo, sin verificar. En las acciones de dejar de seguir, un error de red sigue frenando el proceso como antes.
+- Solo cuentan los avatares que tienen cerca, en su fila, un botón o enlace "Siguiendo" (o "Following"). Las etiquetas están en `followingLabels` de `config.js`. El log registra cuántos avatares se ignoraron en cada pasada.
+- El log registra cuántas cuentas leyó cada pasada y cuáles aparecieron solo en una de las dos, con hasta 20 handles por grupo.
+- Al terminar, el contador "Siguiendo" se vuelve a leer. Si cambió durante el escaneo, queda sin verificar.
+- Un escaneo hecho con la 1.0.2 no tenía segunda pasada. Si el panel todavía muestra uno de esa versión, volvé a escanear antes de revisar los non-mutuals.
 
 ### Cambios en 1.0.3
 
@@ -77,7 +89,7 @@ y abrí `http://localhost:8000`.
 
 1. Entrá a x.com con tu sesión iniciada.
 2. Hacé clic en el marcador. Se abre un panel a la derecha con el chequeo de sesión. Si dice "Sesión detectada: @tuusuario.", podés seguir. Si muestra otro mensaje, resolvé lo que indica; los botones quedan bloqueados hasta entonces.
-3. Tocá "Escanear following". El script abre tu perfil para leer el contador "Siguiendo" y después recorre `/{usuario}/following` dos veces, con desplazamiento automático hasta el final. No lee la lista de followers. Dejá la pestaña abierta y visible. El panel muestra "Leídas X de Y" mientras avanza.
+3. Tocá "Escanear following". El script abre tu perfil para leer el contador "Siguiendo", recorre `/{usuario}/following` dos veces con desplazamiento automático hasta el final y al terminar vuelve a leer el contador. No lee la lista de followers. Dejá la pestaña abierta y visible. El panel muestra "Leídas X de Y" mientras avanza.
 4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no tienen la marca "Te sigue". Debajo aparece si el escaneo quedó verificado o el motivo por el que no. Sin verificación, las acciones no se habilitan.
 5. Marcá cuentas con los checkboxes. Hay botones para seleccionar y deseleccionar todo, y un contador de seleccionadas.
 6. Elegí una acción:
@@ -159,7 +171,7 @@ El historial se escribe antes de sacar la cuenta de la cola. Si algo corta entre
 - rutas de following y perfil (la de followers queda, sin uso desde la 1.0.2);
 - textos que cuentan como advertencia, en español e inglés;
 - rutas que cuentan como redirección a verificación;
-- etiquetas del enlace al perfil propio (`profileLabels`), de la marca "Te sigue" (`followsYouLabels`) y rutas que nunca son un usuario (`reservedPaths`);
+- etiquetas del enlace al perfil propio (`profileLabels`), de la marca "Te sigue" (`followsYouLabels`), del botón "Siguiendo" de cada fila (`followingLabels`) y rutas que nunca son un usuario (`reservedPaths`);
 - rangos de pausas, reintentos y tiempos de espera;
 - topes por defecto;
 - claves de almacenamiento.
@@ -180,7 +192,8 @@ Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores
 - Si la ventana es muy angosta, X esconde el enlace al perfil y el chequeo de sesión falla. Agrandá la ventana.
 - Los `aria-label` dependen del idioma de la interfaz de X. Si usás un idioma distinto de español o inglés, agregá la etiqueta del enlace al perfil en `profileLabels`.
 - Depende del DOM de X. Si X cambia los selectores, el escaneo o la acción fallan hasta actualizar `config.js`.
-- Los textos "Te sigue" y "Siguiendo" dependen del idioma de la interfaz. Si usás otro idioma, agregá la marca en `followsYouLabels`.
+- Los textos "Te sigue" y "Siguiendo" dependen del idioma de la interfaz. Si usás otro idioma, agregá la marca en `followsYouLabels` y el texto del botón en `followingLabels`.
+- Si pasás el mouse sobre el botón "Siguiendo" de una fila mientras escanea, X puede cambiar su texto y esa fila no se cuenta en esa ronda. Dejá el mouse fuera de la lista.
 - Si el contador del perfil está abreviado (por ejemplo "1,2 mil"), no coincide con lo leído y el escaneo queda sin verificar.
 - El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos por pasada, más hasta 4 esperas de 5 a 10 segundos por pasada si faltan cuentas al final.
 - Si algo falla en un escaneo, tocá "Copiar log" y guardá el texto. Ahí figura por qué terminó cada pasada.
