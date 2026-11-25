@@ -2,11 +2,20 @@
 
 Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
 
-Versión actual: 1.0. Cubre el Módulo 1, Mi cuenta.
+Versión actual: 1.0.1. Cubre el Módulo 1, Mi cuenta.
 
 ## Acceso
 
-La versión 1.0 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde la página de GitHub Pages del proyecto.
+Página principal: https://maximoambro.github.io/XManagmentStudio/
+
+La versión 1.0.1 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+
+### Cambios en 1.0.1
+
+- El usuario propio se detecta por el `aria-label` del enlace al perfil ("Perfil" o "Profile"), no por `data-testid`. Las etiquetas están en `profileLabels` de `config.js`.
+- Las rutas que nunca son un usuario (home, explore, notifications y otras) están en `reservedPaths` y se descartan.
+- Antes de escanear o de dejar de seguir, el panel chequea la sesión y muestra el primer problema que encuentra. Si el chequeo falla, los botones quedan bloqueados.
+- Si una lista se lee vacía, el log indica qué selector no encontró nada.
 
 ## Advertencia de riesgo
 
@@ -16,11 +25,13 @@ Usalo bajo tu responsabilidad.
 
 ## Instalación
 
-1. Abrí la página de GitHub Pages del proyecto.
+1. Abrí https://maximoambro.github.io/XManagmentStudio/
 2. Mostrá la barra de marcadores del navegador (Ctrl+Shift+B en Chrome y Edge).
 3. Arrastrá el botón "XManagmentStudio" a la barra.
 
-La página arma el bookmarklet con el contenido de `config.js` y `xmanagmentstudio.js`. El código queda entero dentro del marcador, así que no carga nada externo desde x.com. Si cambiás algo en `config.js`, volvé a arrastrar el marcador para tomar los valores nuevos.
+La página arma el bookmarklet con el contenido de `config.js` y `xmanagmentstudio.js`. El código queda entero dentro del marcador, así que no carga nada externo desde x.com.
+
+Cualquier cambio en `config.js` o en `xmanagmentstudio.js`, incluida una versión nueva, obliga a arrastrar el marcador otra vez. El marcador viejo sigue corriendo el código viejo. Borralo de la barra y arrastrá el nuevo desde la página.
 
 ### Alternativa: consola
 
@@ -43,7 +54,7 @@ y abrí `http://localhost:8000`.
 ## Uso
 
 1. Entrá a x.com con tu sesión iniciada.
-2. Hacé clic en el marcador. Se abre un panel a la derecha.
+2. Hacé clic en el marcador. Se abre un panel a la derecha con el chequeo de sesión. Si dice "Sesión detectada: @tuusuario.", podés seguir. Si muestra otro mensaje, resolvé lo que indica; los botones quedan bloqueados hasta entonces.
 3. Tocá "Escanear following y followers". El script recorre `/{usuario}/following` y después `/{usuario}/followers`, con desplazamiento automático hasta el final. Dejá la pestaña abierta y visible.
 4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no te siguen.
 5. Marcá cuentas con los checkboxes. Hay botones para seleccionar y deseleccionar todo, y un contador de seleccionadas.
@@ -125,6 +136,7 @@ El historial se escribe antes de sacar la cuenta de la cola. Si algo corta entre
 - rutas de following, followers y perfil;
 - textos que cuentan como advertencia, en español e inglés;
 - rutas que cuentan como redirección a verificación;
+- etiquetas del enlace al perfil propio (`profileLabels`) y rutas que nunca son un usuario (`reservedPaths`);
 - rangos de pausas, reintentos y tiempos de espera;
 - topes por defecto;
 - claves de almacenamiento.
@@ -142,6 +154,8 @@ Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores
 
 ## Limitaciones conocidas
 
+- Si la ventana es muy angosta, X esconde el enlace al perfil y el chequeo de sesión falla. Agrandá la ventana.
+- Los `aria-label` dependen del idioma de la interfaz de X. Si usás un idioma distinto de español o inglés, agregá la etiqueta del enlace al perfil en `profileLabels`.
 - Depende del DOM de X. Si X cambia los `data-testid`, el escaneo o la acción fallan hasta actualizar `config.js`.
 - El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos por lista.
 - La detección de 429 se apoya en observar `fetch` y `XMLHttpRequest` de la página. Si X cambia cómo hace sus llamadas, queda la detección por mensajes y redirecciones.

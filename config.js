@@ -7,7 +7,7 @@
  * Tiempos en milisegundos salvo que el nombre diga otra cosa.
  */
 window.XMS_CONFIG = {
-  version: '1.0.0',
+  version: '1.0.1',
 
   // Ritmo y pausas
   timing: {
@@ -46,7 +46,9 @@ window.XMS_CONFIG = {
 
   // Selectores DOM
   selectors: {
-    ownProfileLink: 'a[data-testid="AppTabBar_Profile_Link"]',
+    nav: 'nav',
+    header: 'header',
+    navLink: 'a[href]',
     primaryColumn: '[data-testid="primaryColumn"]',
     userCell: '[data-testid="UserCell"]',
     userCellLink: 'a[role="link"][href]',
@@ -66,6 +68,17 @@ window.XMS_CONFIG = {
 
   // Formato valido de nombre de usuario en un href de celda
   handlePattern: '^/([A-Za-z0-9_]{1,15})$',
+
+  // aria-label del enlace al perfil propio en la navegacion. Depende del idioma de la interfaz.
+  // Se comparan sin distinguir mayusculas.
+  profileLabels: ['Perfil', 'Profile'],
+
+  // Rutas de una sola palabra que nunca son un usuario. Se comparan sin distinguir mayusculas.
+  reservedPaths: [
+    'home', 'explore', 'notifications', 'messages', 'search', 'settings', 'compose',
+    'i', 'login', 'logout', 'signup', 'tos', 'privacy', 'jobs', 'communities',
+    'premium', 'lists', 'bookmarks', 'account', 'hashtag'
+  ],
 
   // Rutas que indican verificacion o cierre de sesion
   blockedPaths: [

@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.1 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -12,7 +12,7 @@
     return;
   }
   if (!/(^|\.)(x|twitter)\.com$/.test(location.hostname)) {
-    window.alert('XManagmentStudio: abrí x.com con tu sesión iniciada y volvé a ejecutarlo.');
+    window.alert('XManagmentStudio: Abrí x.com con tu sesión iniciada.');
     return;
   }
   if (window.__XMS__) {
@@ -345,18 +345,92 @@
     window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
   }
 
-  function getMe() {
-    var a = document.querySelector(SEL.ownProfileLink);
-    if (!a) return null;
-    var m = (a.getAttribute('href') || '').match(new RegExp(C.handlePattern));
-    return m ? m[1] : null;
+  /* ------------------------------------------------------------------ */
+  /* Usuario propio y chequeo de sesion                                  */
+  /* ------------------------------------------------------------------ */
+
+  var handleRe = new RegExp(C.handlePattern);
+  var reserved = {};
+  C.reservedPaths.forEach(function (p) { reserved[String(p).toLowerCase()] = true; });
+  var profileLabels = C.profileLabels.map(function (t) { return String(t).trim().toLowerCase(); });
+
+  // Un handle vale solo si cumple handlePattern y no es una ruta reservada.
+  function handleFromHref(href) {
+    var m = String(href || '').match(handleRe);
+    if (!m) return null;
+    return reserved[m[1].toLowerCase()] ? null : m[1];
+  }
+
+  function toArray(list) { return Array.prototype.slice.call(list || []); }
+
+  // Handles distintos (sin distinguir mayusculas) de los enlaces que pasan el filtro.
+  function collectHandles(roots, filter) {
+    var found = {};
+    roots.forEach(function (root) {
+      var links = root.querySelectorAll(SEL.navLink);
+      for (var i = 0; i < links.length; i++) {
+        var a = links[i];
+        if (a.closest('#' + C.ui.rootId) || !filter(a)) continue;
+        var handle = handleFromHref(a.getAttribute('href'));
+        if (handle) found[handle.toLowerCase()] = handle;
+      }
+    });
+    return Object.keys(found).map(function (k) { return found[k]; });
+  }
+
+  // Devuelve { handle } si hay un solo candidato. Si hay cero o varios, handle es null.
+  function findMe() {
+    var navs = toArray(document.querySelectorAll(SEL.nav));
+    var heads = toArray(document.querySelectorAll(SEL.header));
+    var byLabel = collectHandles(navs.concat(heads), function (a) {
+      return profileLabels.indexOf((a.getAttribute('aria-label') || '').trim().toLowerCase()) !== -1;
+    });
+    if (byLabel.length === 1) return { handle: byLabel[0], candidates: byLabel };
+    if (byLabel.length > 1) return { handle: null, candidates: byLabel };
+    var inNav = collectHandles(navs, function () { return true; });
+    return { handle: inNav.length === 1 ? inNav[0] : null, candidates: inNav };
+  }
+
+  var PF_MSG = {
+    host: 'Abrí x.com con tu sesión iniciada.',
+    blocked: 'X pidió iniciar sesión o verificar la cuenta. Resolvelo y volvé a ejecutar.',
+    nav: 'No se encontró la navegación. Recargá x.com con tu sesión iniciada.',
+    me: 'No se encontró el enlace a tu perfil. Revisá que estés logueado y que la ventana no sea muy angosta.'
+  };
+
+  function preflight() {
+    if (!/(^|\.)(x|twitter)\.com$/.test(location.hostname)) return { ok: false, step: 'host', message: PF_MSG.host };
+    var path = location.pathname;
+    for (var i = 0; i < blockedRe.length; i++) {
+      if (blockedRe[i].test(path)) return { ok: false, step: 'blocked', message: PF_MSG.blocked };
+    }
+    if (!document.querySelector(SEL.nav)) return { ok: false, step: 'nav', message: PF_MSG.nav };
+    var me = findMe();
+    if (!me.handle) return { ok: false, step: 'me', message: PF_MSG.me, candidates: me.candidates };
+    return { ok: true, step: 'ok', handle: me.handle, message: 'Sesión detectada: @' + me.handle + '.' };
+  }
+
+  var pf = null;
+  var pfKey = '';
+
+  // Corre el chequeo y lo registra en el log solo cuando cambia el resultado.
+  function refreshPreflight() {
+    var r = preflight();
+    var key = r.ok ? 'ok:' + r.handle.toLowerCase() : r.step;
+    if (key !== pfKey) {
+      pfKey = key;
+      logMsg(r.message);
+      if (r.step === 'me' && r.candidates && r.candidates.length > 1) {
+        logMsg('Hay más de un perfil posible: @' + r.candidates.join(', @') + '. No se eligió ninguno.');
+      }
+    }
+    pf = r;
+    return r;
   }
 
   /* ------------------------------------------------------------------ */
   /* Escaneo                                                             */
   /* ------------------------------------------------------------------ */
-
-  var handleRe = new RegExp(C.handlePattern);
 
   function readCells(into) {
     var col = document.querySelector(SEL.primaryColumn);
@@ -387,16 +461,37 @@
     return added;
   }
 
+  // Indica cual selector no encontro nada cuando la lectura de celdas queda vacia.
+  function cellDiag(label) {
+    var pre = 'Diagnóstico (' + label + '): ';
+    var col = document.querySelector(SEL.primaryColumn);
+    if (!col) return pre + 'primaryColumn (' + SEL.primaryColumn + ') no encontró nada.';
+    var cells = col.querySelectorAll(SEL.userCell);
+    if (cells.length === 0) {
+      if (col.querySelector(SEL.emptyState)) return pre + 'userCell (' + SEL.userCell + ') no encontró nada. Hay emptyState: la lista figura vacía.';
+      return pre + 'userCell (' + SEL.userCell + ') no encontró nada. Tampoco emptyState (' + SEL.emptyState + ').';
+    }
+    var links = 0;
+    for (var i = 0; i < cells.length; i++) links += cells[i].querySelectorAll(SEL.userCellLink).length;
+    if (links === 0) return pre + 'userCellLink (' + SEL.userCellLink + ') no encontró nada en ' + cells.length + ' celdas.';
+    return pre + 'userCellLink encontró ' + links + ' enlaces, pero ninguno cumple handlePattern (' + C.handlePattern + ').';
+  }
+
   async function scanList(kind, me) {
     var path = route(kind, me);
     var label = kind === 'following' ? 'following' : 'followers';
     navigate(path);
     await waitFor(function () { return samePath(location.pathname, path); }, T.navTimeout, 'la ruta ' + path);
     await sleep(rand(T.readDelay));
-    await waitFor(function () {
-      var col = document.querySelector(SEL.primaryColumn);
-      return col && (col.querySelector(SEL.userCell) || col.querySelector(SEL.emptyState));
-    }, T.navTimeout, 'la lista de ' + label);
+    try {
+      await waitFor(function () {
+        var col = document.querySelector(SEL.primaryColumn);
+        return col && (col.querySelector(SEL.userCell) || col.querySelector(SEL.emptyState));
+      }, T.navTimeout, 'la lista de ' + label);
+    } catch (e) {
+      if (!(e instanceof WarnError) && !(e instanceof StopError)) logMsg(cellDiag(label));
+      throw e;
+    }
 
     window.scrollTo(0, 0);
     await sleep(rand(T.readDelay));
@@ -416,6 +511,7 @@
       await sleep(rand(T.readDelay), 'Lectura');
     }
     readCells(found);
+    if (Object.keys(found).length === 0) logMsg(cellDiag(label));
     return found;
   }
 
@@ -439,9 +535,8 @@
   }
 
   async function doScan() {
-    var me = getMe();
-    if (!me) throw new Error('No se encontró el usuario de la sesión. Abrí x.com/home y probá de nuevo.');
-    run.me = me;
+    var me = run.me;
+    if (!me) throw new Error(PF_MSG.me);
     logMsg('Escaneando following de @' + me + '.');
     var following = await withRetry('Escaneo following', function () { return scanList('following', me); });
     logMsg('Following: ' + Object.keys(following).length + ' cuentas. Escaneando followers.');
@@ -645,6 +740,9 @@
 
   async function startProcess(kind, fn) {
     if (run.active) { logMsg('Ya hay un proceso activo.'); return; }
+    var check = refreshPreflight();
+    if (!check.ok) { logMsg('No se puede iniciar: ' + check.message); render(); return; }
+    run.me = check.handle;
     if (!acquireLock()) { logMsg('Hay otro proceso activo en otra pestaña.'); return; }
     run.active = true;
     run.kind = kind;
@@ -678,6 +776,8 @@
 
   function startQueue(mode) {
     if (run.active) { logMsg('Ya hay un proceso activo.'); return; }
+    var check = refreshPreflight();
+    if (!check.ok) { logMsg('No se puede iniciar: ' + check.message); render(); return; }
     var targets = buildTargets(mode);
     if (!targets) { logMsg('Primero escaneá tu cuenta.'); return; }
     if (targets.length === 0) { logMsg('No hay cuentas para procesar con esa opción.'); return; }
@@ -797,6 +897,7 @@
     ui.nextPause = h('b');
     ui.wait = h('b');
     ui.reason = h('div', { 'class': 'muted full' });
+    ui.pf = h('div', { 'class': 'full' });
 
     ui.scanInfo = h('div', { 'class': 'muted' });
     ui.btnScan = h('button', { 'class': 'b', text: 'Escanear following y followers', on: { click: function () { startProcess('scan', doScan); } } });
@@ -826,6 +927,7 @@
       ]),
       h('div', { 'class': 'st' }, [
         h('div', { 'class': 'full' }, [h('em', { text: 'Estado' }), ui.status]),
+        ui.pf,
         h('div', null, [h('em', { text: 'Sesión' }), ui.session]),
         h('div', null, [h('em', { text: 'Hoy' }), ui.daily]),
         h('div', null, [h('em', { text: 'Pausa larga en' }), ui.nextPause]),
@@ -936,6 +1038,13 @@
 
   function render() {
     if (!ui.host) return;
+    // Durante un proceso no se repite el chequeo: la navegacion cambia de pagina.
+    if (!run.active) refreshPreflight();
+    if (pf) {
+      ui.pf.textContent = pf.message;
+      ui.pf.className = 'full ' + (pf.ok ? 'muted' : 's-warn');
+    }
+
     var ps = getPState();
     var st = STATUS_TEXT[ps.status] || STATUS_TEXT.idle;
     ui.status.textContent = st[0];
@@ -968,12 +1077,13 @@
     ui.queueInfo.textContent = q && q.items.length ? 'Cola: ' + q.items.length + ' pendientes' : '';
 
     var busy = run.active;
-    ui.btnScan.disabled = busy;
-    ui.btnAll.disabled = busy || !scan;
-    ui.btnSel.disabled = busy || !scan;
-    ui.btnExc.disabled = busy || !scan;
+    var blocked = !(pf && pf.ok);
+    ui.btnScan.disabled = busy || blocked;
+    ui.btnAll.disabled = busy || blocked || !scan;
+    ui.btnSel.disabled = busy || blocked || !scan;
+    ui.btnExc.disabled = busy || blocked || !scan;
     ui.btnStop.disabled = !busy;
-    ui.btnResume.disabled = busy || !(q && q.items.length);
+    ui.btnResume.disabled = busy || blocked || !(q && q.items.length);
     ui.btnDiscard.disabled = busy || !(q && q.items.length);
   }
 
@@ -994,7 +1104,6 @@
   buildUI();
   render();
   setInterval(function () { if (ui.host && ui.host.style.display !== 'none') render(); }, 1000);
-  logMsg('Listo. Usuario: @' + (getMe() || 'no detectado') + '.');
 
   window.__XMS__ = { show: show, hide: hide, version: C.version };
 })();
