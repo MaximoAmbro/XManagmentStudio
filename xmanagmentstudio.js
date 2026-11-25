@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0.4 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.5 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -608,21 +608,25 @@
     var path = route('profile', me);
     var target = route('following', me);
     navigate(path);
-    var link = await waitFor(function () {
+    // Se espera un enlace con numero. Al venir de la lista de following, X puede seguir
+    // mostrando la pestana "Siguiendo" (mismo href, sin numero) antes de dibujar el perfil.
+    var count = await waitFor(function () {
       if (!samePath(location.pathname, path)) return null;
       var main = document.querySelector(SEL.main);
       if (!main) return null;
       var links = main.querySelectorAll(SEL.followingCountLink);
       for (var i = 0; i < links.length; i++) {
-        if (samePath(links[i].getAttribute('href') || '', target)) return links[i];
+        if (!samePath(links[i].getAttribute('href') || '', target)) continue;
+        var n = parseCount(links[i].textContent);
+        if (n !== null) return { n: n };
       }
       return null;
     }, T.navTimeout, 'el contador de Siguiendo en tu perfil');
-    return parseCount(link.textContent);
+    return count.n;
   }
 
-  // Fusiona src en dst por handle: la marca "Te sigue" queda si aparecio en cualquier lectura
-  // y el nombre se completa si alguna lectura lo tiene. Devuelve cuantas cuentas nuevas sumo.
+  // Copia src en dst por handle, sin la cuenta propia. Si una fila se relee en otra ronda,
+  // la marca "Te sigue" y el nombre se completan. Devuelve cuantas cuentas nuevas sumo.
   function mergeAccounts(dst, src, skipKey) {
     var added = 0;
     Object.keys(src).forEach(function (key) {
@@ -644,14 +648,9 @@
     return window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 100;
   }
 
-  function countMarks(map) {
-    return Object.keys(map).filter(function (k) { return map[k].followsYou; }).length;
-  }
-
   function fmtTotal(total) { return total === null || total === undefined ? '?' : String(total); }
 
-  // Una pasada completa desde el inicio de la pagina. Lee en un mapa propio, para que las
-  // rondas sin cuentas nuevas se cuenten dentro de la pasada, y fusiona en all.
+  // La unica pasada del escaneo, desde el inicio de la pagina hasta el final.
   // Devuelve { seen, incomplete }: incomplete es true si se agotaron los reintentos de red.
   async function scanPass(pass, all, total, me) {
     var tag = 'Pasada ' + pass;
@@ -667,7 +666,6 @@
     };
     var progress = function () {
       run.scanCount = Object.keys(all).length;
-      run.scanPass = pass;
       render();
     };
 
@@ -751,13 +749,6 @@
     return { seen: seen, incomplete: incomplete };
   }
 
-  // Handles que estan en a y no en b, hasta max, para el log.
-  function onlyIn(a, b, max) {
-    var keys = Object.keys(a).filter(function (k) { return !b[k]; });
-    var list = keys.slice(0, max).map(function (k) { return '@' + a[k].handle; });
-    return { count: keys.length, list: list };
-  }
-
   // Devuelve { found, incomplete }.
   async function scanList(kind, me, total) {
     var path = route(kind, me);
@@ -777,25 +768,10 @@
 
     var found = {};
     run.scanLabel = label;
-    var p1 = await scanPass(1, found, total, me);
-    var incomplete = p1.incomplete;
-    if (C.scan.secondPass && !incomplete) {
-      var marksBefore = countMarks(found);
-      var p2 = await scanPass(2, found, total, me);
-      incomplete = p2.incomplete;
-      var only1 = onlyIn(p1.seen, p2.seen, 20);
-      var only2 = onlyIn(p2.seen, p1.seen, 20);
-      logMsg('Fusión: ' + only1.count + ' cuentas solo en la primera pasada' + (only1.count ? ' (' + only1.list.join(', ') +
-        (only1.count > 20 ? ', ...' : '') + ')' : '') + '.');
-      logMsg('Fusión: ' + only2.count + ' cuentas solo en la segunda pasada' + (only2.count ? ' (' + only2.list.join(', ') +
-        (only2.count > 20 ? ', ...' : '') + ')' : '') + '.');
-      logMsg('Segunda pasada: ' + (countMarks(found) - marksBefore) + ' marcas "Te sigue" que no estaban en la primera. Total fusionado: ' +
-        Object.keys(found).length + '.');
-    } else if (C.scan.secondPass) {
-      logMsg('La segunda pasada no se hizo porque la primera quedó incompleta.');
-    }
+    // Una sola pasada. Las marcas "Te sigue" se leen en las filas a medida que pasan.
+    var p = await scanPass(1, found, total, me);
     if (Object.keys(found).length === 0) logMsg(cellDiag(label));
-    return { found: found, incomplete: incomplete };
+    return { found: found, incomplete: p.incomplete };
   }
 
   async function withRetry(context, fn) {
@@ -860,8 +836,9 @@
     var endCount = await tryFollowingCount(me);
     logMsg('Contador al inicio: ' + fmtTotal(profileCount) + '. Contador al final: ' + fmtTotal(endCount) + '.');
 
-    // Verificacion de cordura, despues de las dos pasadas y de los intentos extra.
-    // Las cuentas fusionadas tienen que ser exactamente iguales al contador.
+    // Verificacion de cordura, despues de la pasada y de los intentos extra.
+    // Las cuentas leidas tienen que ser exactamente iguales al contador del inicio, y el
+    // contador final tiene que coincidir con el del inicio.
     var reasons = [];
     if (mutuals === 0) reasons.push(VERIFY_MSG.noMarks);
     if (result.incomplete) reasons.push(VERIFY_MSG.network);
@@ -1072,7 +1049,6 @@
     scanCount: 0,
     scanLabel: '',
     scanTotal: null,
-    scanPass: 0,
     me: null
   };
 
@@ -1116,7 +1092,6 @@
       run.waitUntil = 0;
       run.scanCount = 0;
       run.scanTotal = null;
-      run.scanPass = 0;
       run.scanLabel = '';
       releaseLock();
       render();
@@ -1462,7 +1437,7 @@
     if (run.active && run.kind === 'scan') {
       ui.scanInfo.textContent = run.scanLabel === 'contador'
         ? 'Leyendo el contador de Siguiendo.'
-        : 'Leídas ' + run.scanCount + ' de ' + fmtTotal(run.scanTotal) + (run.scanPass ? ' (pasada ' + run.scanPass + ')' : '') + '.';
+        : 'Leídas ' + run.scanCount + ' de ' + fmtTotal(run.scanTotal) + '.';
     } else if (scan) {
       ui.scanInfo.textContent = '@' + scan.me + '. Following ' + scan.followingCount +
         (typeof scan.mutualsCount === 'number' ? ', te siguen ' + scan.mutualsCount : '') +
