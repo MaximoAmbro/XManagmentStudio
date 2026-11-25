@@ -2,13 +2,29 @@
 
 Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
 
-Versión actual: 1.0.5. Cubre el Módulo 1, Mi cuenta.
+Versión actual: 1.0.6. Cubre el Módulo 1, Mi cuenta.
+
+Estado: con la 1.0.6 queda cerrada la versión 1.0. La lógica de dejar de seguir se revisa en la 1.1.
 
 ## Acceso
 
 Página principal: https://maximoambro.github.io/XManagmentStudio/
 
-La versión 1.0.5 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+La versión 1.0.6 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+
+### Cambios en 1.0.6
+
+Si tenías el marcador de la 1.0.5, borralo y arrastrá el nuevo. Cualquier cambio en `config.js` o en el script obliga a arrastrar el marcador otra vez. Si la pestaña tenía abierto el panel de la 1.0.5, el marcador nuevo lo reemplaza solo.
+
+Si salís de la pestaña de X mientras corre un proceso, el proceso se pausa y hay que reanudarlo a mano.
+
+- Pausa por pestaña oculta (`behavior.pauseOnHidden`). Si la pestaña de X queda oculta durante un escaneo o una cola de acciones, el proceso se pausa antes de la siguiente lectura o acción. El estado queda como "Pausado (pestaña oculta)" y el log registra la pausa.
+- Escaneo pausado: se descarta, sin guardar resultado parcial. Volvé a la pestaña y escaneá de nuevo con el botón de siempre.
+- Cola pausada: queda guardada. Si la pausa llegó en medio de una acción, esa acción se registra como interrumpida, no como error ni como advertencia, y la cuenta queda primera en la cola.
+- Volver a la pestaña no reanuda nada. La cola se reanuda solo con "Reanudar cola".
+- Al reanudar una acción interrumpida, el script revisa primero el perfil de esa cuenta. Si ya no la seguís, la registra como hecha sin volver a hacer click. Si todavía la seguís, la acción se reintenta.
+- Mientras hay un proceso activo, el panel muestra debajo del estado: "Si salís de la pestaña de X, el proceso se pausa."
+- Roadmap reordenado.
 
 ### Cambios en 1.0.5
 
@@ -98,7 +114,7 @@ y abrí `http://localhost:8000`.
 
 1. Entrá a x.com con tu sesión iniciada.
 2. Hacé clic en el marcador. Se abre un panel a la derecha con el chequeo de sesión. Si dice "Sesión detectada: @tuusuario.", podés seguir. Si muestra otro mensaje, resolvé lo que indica; los botones quedan bloqueados hasta entonces.
-3. Tocá "Escanear following". El script abre tu perfil para leer el contador "Siguiendo", recorre `/{usuario}/following` una vez con desplazamiento automático hasta el final y al terminar vuelve a tu perfil para leer el contador otra vez. No lee la lista de followers. Dejá la pestaña abierta y visible. El panel muestra "Leídas X de Y" mientras avanza.
+3. Tocá "Escanear following". El script abre tu perfil para leer el contador "Siguiendo", recorre `/{usuario}/following` una vez con desplazamiento automático hasta el final y al terminar vuelve a tu perfil para leer el contador otra vez. No lee la lista de followers. Dejá la pestaña abierta y visible. El panel muestra "Leídas X de Y" mientras avanza. Si salís de la pestaña, el escaneo se pausa y se descarta: volvé y escaneá de nuevo.
 4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no tienen la marca "Te sigue". Debajo aparece si el escaneo quedó verificado o el motivo por el que no. Sin verificación, las acciones no se habilitan.
 5. Marcá cuentas con los checkboxes. Hay botones para seleccionar y deseleccionar todo, y un contador de seleccionadas.
 6. Elegí una acción:
@@ -106,13 +122,13 @@ y abrí `http://localhost:8000`.
    - Dejar de seguir a los seleccionados.
    - Dejar de seguir a todos menos los seleccionados.
 
-El botón de la acción es la única confirmación. Al tocarlo, se arma la cola y arranca.
+El botón de la acción es la única confirmación. Al tocarlo, se arma la cola y arranca. Dejá la pestaña de X visible mientras corre. Si salís, la cola se pausa y queda guardada. Para seguir, volvé a la pestaña y apretá "Reanudar cola".
 
 Para cada cuenta, el script abre su perfil, confirma que muestra "@cuenta", verifica que la seguís y que no tiene la marca "Te sigue", toca "Siguiendo" y confirma. Si la cuenta te sigue desde el escaneo, se omite.
 
 ### Barra de estado
 
-- Estado: inactivo, activo, pausado (pausa larga o error), detenido (advertencia, tope o usuario).
+- Estado: inactivo, activo, pausado (pausa larga, error o pestaña oculta), detenido (advertencia, tope o usuario).
 - Sesión: acciones hechas en esta pestaña sobre el tope por sesión.
 - Hoy: acciones del día sobre el tope diario. Se reinicia con la fecha local.
 - Pausa larga en: acciones que faltan para la próxima pausa larga.
@@ -121,7 +137,7 @@ Para cada cuenta, el script abre su perfil, confirma que muestra "@cuenta", veri
 ### Botones de control
 
 - Detener: corta el proceso en curso. La cola queda guardada.
-- Reanudar cola: retoma la cola pendiente. Es la única forma de seguir después de una advertencia.
+- Reanudar cola: retoma la cola pendiente. Es la única forma de seguir después de una advertencia o de una pausa por pestaña oculta.
 - Descartar cola: borra la cola pendiente. El historial no se toca.
 
 ## Cómo funciona
@@ -198,6 +214,7 @@ Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores
 
 ## Limitaciones conocidas
 
+- El proceso no corre en segundo plano. Con la pestaña de X oculta, el navegador frena los temporizadores y X no dibuja las filas que no están a la vista, así que el script pausa el escaneo o la cola. El escaneo pausado se descarta. La cola se reanuda a mano con "Reanudar cola".
 - Si la ventana es muy angosta, X esconde el enlace al perfil y el chequeo de sesión falla. Agrandá la ventana.
 - Los `aria-label` dependen del idioma de la interfaz de X. Si usás un idioma distinto de español o inglés, agregá la etiqueta del enlace al perfil en `profileLabels`.
 - Depende del DOM de X. Si X cambia los selectores, el escaneo o la acción fallan hasta actualizar `config.js`.
@@ -212,13 +229,15 @@ Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores
 
 ## Roadmap
 
+La versión 1.0 (Módulo 1, Mi cuenta: escaneo de following, non-mutuals y acciones masivas con selección) quedó cerrada con la 1.0.6.
+
 | Versión | Alcance |
 |---|---|
-| 1.0 | Módulo 1, Mi cuenta: escaneo de following y followers, non-mutuals, acciones masivas con selección. |
-| 1.1 | Módulo 2, Cuenta ajena: scrapeo de followers de un @usuario y seguir a N cuentas con tope. |
-| 1.2 | Módulo 3, Mis tweets: scrapeo de tweets propios (destacados o más recientes) y de sus interacciones directas (likes, retweets y citas), agrupadas por nombre de usuario. Seguir a todos, a los seleccionados o a N. |
+| 1.1 | Lógica de dejar de seguir. |
+| 1.2 | Scrapeo de otra cuenta: followers de un @usuario y seguir a N cuentas con tope. |
+| 1.3 | Cuentas con interacción directa: likes, retweets y citas de un tweet propio. Seguir a todos, a los seleccionados o a N. |
 | 2.0 | Traducción a español, inglés, portugués, turco, indonesio, árabe (con soporte RTL) e hindi. |
-| 2.1 | Control de acceso controlado por el administrador. |
+| 2.1 | Control de acceso por administrador. |
 | 3.0 | Funcionamiento continuo y rápido, sin provocar el cierre de la cuenta por scrapeo sospechoso. |
 
 La 3.0 está sin definir. Velocidad y bajo riesgo van en direcciones opuestas, y todavía no hay un método para tener las dos.

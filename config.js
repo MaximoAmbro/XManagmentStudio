@@ -7,7 +7,7 @@
  * Tiempos en milisegundos salvo que el nombre diga otra cosa.
  */
 window.XMS_CONFIG = {
-  version: '1.0.5',
+  version: '1.0.6',
 
   // Ritmo y pausas
   timing: {
@@ -22,6 +22,11 @@ window.XMS_CONFIG = {
     elementTimeout: 10000,                       // espera de un boton o dialogo
     confirmTimeout: 8000,                        // espera del cambio de estado tras dejar de seguir
     clickSettle: { min: 600, max: 1500 }         // pausa corta entre click y confirmacion
+  },
+
+  // Comportamiento del proceso
+  behavior: {
+    pauseOnHidden: true      // pausa el escaneo o la cola si la pestana de X queda oculta
   },
 
   // Topes por defecto. Se pueden cambiar desde el panel.

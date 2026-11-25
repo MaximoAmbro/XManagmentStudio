@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0.5 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.6 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -50,6 +50,15 @@
 
   function StopError() { this.name = 'StopError'; this.message = 'Detenido por el usuario'; }
   StopError.prototype = Object.create(Error.prototype);
+
+  // La pestana de X quedo oculta durante un proceso. Pausa, no es error ni advertencia.
+  function HiddenError() { this.name = 'HiddenError'; this.message = 'Pestaña oculta'; }
+  HiddenError.prototype = Object.create(Error.prototype);
+
+  // Errores que cortan el proceso sin reintentos.
+  function isControlError(e) {
+    return e instanceof WarnError || e instanceof StopError || e instanceof HiddenError;
+  }
 
   /* ------------------------------------------------------------------ */
   /* Almacenamiento                                                      */
@@ -316,6 +325,7 @@
 
   function guard() {
     if (run.stopRequested) throw new StopError();
+    if (run.hiddenPause) throw new HiddenError();
     var w = detectWarning();
     if (w) throw new WarnError(w);
   }
@@ -762,7 +772,7 @@
         return main && main.querySelector(SEL.avatarImg);
       }, T.navTimeout, 'la lista de ' + label);
     } catch (e) {
-      if (!(e instanceof WarnError) && !(e instanceof StopError)) logMsg(cellDiag(label));
+      if (!isControlError(e)) logMsg(cellDiag(label));
       throw e;
     }
 
@@ -780,7 +790,7 @@
       try {
         return await fn();
       } catch (e) {
-        if (e instanceof WarnError || e instanceof StopError) throw e;
+        if (isControlError(e)) throw e;
         if (attempt >= T.maxRetries) {
           logError(context, e.message);
           throw e;
@@ -798,7 +808,7 @@
     try {
       return await readFollowingCount(me);
     } catch (e) {
-      if (e instanceof WarnError || e instanceof StopError) throw e;
+      if (isControlError(e)) throw e;
       logMsg('No se pudo leer el contador de Siguiendo: ' + e.message);
       return null;
     }
@@ -946,6 +956,24 @@
     return 'ok';
   }
 
+  // Solo lectura: abre el perfil y devuelve 'following' si todavia la seguis o
+  // 'not_following' si no. Se usa antes de retomar una accion interrumpida.
+  async function readFollowState(handle) {
+    var path = route('profile', handle);
+    var at = '@' + handle.toLowerCase();
+    var isHandleText = function (t) { return t.toLowerCase() === at; };
+    navigate(path);
+    await waitFor(function () {
+      if (!samePath(location.pathname, path)) return false;
+      var main = document.querySelector(SEL.main);
+      if (!main || !findExactText(main, isHandleText)) return false;
+      var b = profileButtons();
+      return b && (b.unfollow || b.follow);
+    }, T.navTimeout, 'el perfil de @' + handle);
+    var b = profileButtons();
+    return b.unfollow ? 'following' : 'not_following';
+  }
+
   function buildTargets(mode) {
     var scan = getScan();
     if (!scan) return null;
@@ -982,9 +1010,33 @@
       setStatus('running', 'Procesando @' + handle + '. Quedan ' + q.items.length + '.');
 
       var result;
+      var inAction = false;
       try {
-        result = await withRetry('Dejar de seguir @' + handle, function () { return unfollowOne(handle); });
+        // Si la pestana ya esta oculta, se pausa antes de empezar la accion.
+        guard();
+        inAction = true;
+        var wasInterrupted = q.interrupted && q.interrupted.toLowerCase() === handle.toLowerCase();
+        if (wasInterrupted) {
+          // Accion interrumpida por pestana oculta: se revisa el perfil antes de repetirla.
+          var state = await withRetry('Revisar @' + handle, function () { return readFollowState(handle); });
+          if (state === 'not_following') {
+            result = 'ok';
+            logMsg('@' + handle + ': la acción interrumpida ya se había completado. Se registra sin repetir el click.');
+          } else {
+            logMsg('@' + handle + ': la acción interrumpida no se completó. Se reintenta.');
+          }
+        }
+        if (!result) result = await withRetry('Dejar de seguir @' + handle, function () { return unfollowOne(handle); });
       } catch (e) {
+        if (e instanceof HiddenError) {
+          if (inAction) {
+            addHistory(handle, 'unfollow', 'interrupted', 'Pestaña oculta');
+            q.interrupted = handle;
+            saveQueue(q);
+            logMsg('@' + handle + ': acción interrumpida por pestaña oculta. Queda primera en la cola.');
+          }
+          throw e;
+        }
         if (e instanceof WarnError && e.completed) {
           addHistory(handle, 'unfollow', 'ok');
           q.items.shift();
@@ -1004,6 +1056,7 @@
       // reconcileQueue limpia la cola en la siguiente vuelta.
       addHistory(handle, 'unfollow', result);
       q.items.shift();
+      delete q.interrupted;
       saveQueue(q);
       markRow(handle, result);
 
@@ -1044,6 +1097,7 @@
     active: false,
     kind: '',
     stopRequested: false,
+    hiddenPause: false,
     waitUntil: 0,
     waitLabel: '',
     scanCount: 0,
@@ -1065,10 +1119,12 @@
     var check = refreshPreflight();
     if (!check.ok) { logMsg('No se puede iniciar: ' + check.message); render(); return; }
     run.me = check.handle;
+    if (isHidden()) { logMsg('No se puede iniciar con la pestaña de X oculta.'); return; }
     if (!acquireLock()) { logMsg('Hay otro proceso activo en otra pestaña.'); return; }
     run.active = true;
     run.kind = kind;
     run.stopRequested = false;
+    run.hiddenPause = false;
     clearNetFlag();
     net.watching = true;
     setStatus('running', '');
@@ -1081,6 +1137,9 @@
         logError(kind, e.message);
       } else if (e instanceof StopError) {
         setStatus('stopped_user', 'Detenido por el usuario.');
+      } else if (e instanceof HiddenError) {
+        // El escaneo se descarta sin guardar nada. La cola queda guardada para reanudar a mano.
+        setStatus('paused_hidden', kind === 'scan' ? HIDDEN_MSG.scan : HIDDEN_MSG.queue);
       } else {
         setStatus('paused_error', 'Error: ' + e.message);
         logError(kind, e.message);
@@ -1089,6 +1148,7 @@
       net.watching = false;
       run.active = false;
       run.kind = '';
+      run.hiddenPause = false;
       run.waitUntil = 0;
       run.scanCount = 0;
       run.scanTotal = null;
@@ -1097,6 +1157,30 @@
       render();
     }
   }
+
+  /* ------------------------------------------------------------------ */
+  /* Pausa por pestana oculta                                            */
+  /* ------------------------------------------------------------------ */
+
+  var HIDDEN_MSG = {
+    scan: 'Pausado: la pestaña de X quedó oculta. Volvé a la pestaña y escaneá de nuevo.',
+    queue: 'Pausado: la pestaña de X quedó oculta. Volvé a la pestaña y apretá Reanudar cola.',
+    notice: 'Si salís de la pestaña de X, el proceso se pausa.'
+  };
+
+  function pauseOnHidden() { return !!(C.behavior && C.behavior.pauseOnHidden); }
+
+  function isHidden() { return pauseOnHidden() && document.visibilityState === 'hidden'; }
+
+  // Al ocultarse la pestana se marca la pausa. La toma guard() antes de la siguiente
+  // lectura o accion. Volver a la pestana no reanuda nada: la cola se reanuda con el boton.
+  function onVisibilityChange() {
+    if (!isHidden() || !run.active || run.hiddenPause) return;
+    run.hiddenPause = true;
+    logMsg('La pestaña de X quedó oculta durante ' + (run.kind === 'scan' ? 'el escaneo' : 'la cola de acciones') + '. Se pausa el proceso.');
+  }
+
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   function startQueue(mode) {
     if (run.active) { logMsg('Ya hay un proceso activo.'); return; }
@@ -1245,7 +1329,8 @@
     paused_error: ['Pausado (error)', 's-pause'],
     stopped_warning: ['Detenido (advertencia)', 's-warn'],
     stopped_cap: ['Detenido (tope)', 's-warn'],
-    stopped_user: ['Detenido (usuario)', 's-pause']
+    stopped_user: ['Detenido (usuario)', 's-pause'],
+    paused_hidden: ['Pausado (pestaña oculta)', 's-pause']
   };
 
   function fmtTime(ms) {
@@ -1266,6 +1351,7 @@
     ui.nextPause = h('b');
     ui.wait = h('b');
     ui.reason = h('div', { 'class': 'muted full' });
+    ui.hiddenNote = h('div', { 'class': 'muted full' });
     ui.pf = h('div', { 'class': 'full' });
 
     ui.scanInfo = h('div', { 'class': 'muted' });
@@ -1299,6 +1385,7 @@
       ]),
       h('div', { 'class': 'st' }, [
         h('div', { 'class': 'full' }, [h('em', { text: 'Estado' }), ui.status]),
+        ui.hiddenNote,
         ui.pf,
         h('div', null, [h('em', { text: 'Sesión' }), ui.session]),
         h('div', null, [h('em', { text: 'Hoy' }), ui.daily]),
@@ -1426,6 +1513,8 @@
     ui.status.textContent = st[0];
     ui.status.className = st[1];
     ui.reason.textContent = ps.reason || '';
+    ui.hiddenNote.textContent = run.active && pauseOnHidden() ? HIDDEN_MSG.notice : '';
+    ui.hiddenNote.style.display = ui.hiddenNote.textContent ? '' : 'none';
 
     var s = getSettings();
     ui.session.textContent = getSessionCount() + ' / ' + s.perSession;
