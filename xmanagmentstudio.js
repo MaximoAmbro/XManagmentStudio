@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0.6 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.7 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -166,9 +166,15 @@
 
   function getQueue() { return load(K.queue, null); }
 
-  function saveQueue(q) {
+  // La cola solo se borra si se descarta o si se queda sin cuentas. reason va al log.
+  function saveQueue(q, reason) {
     if (!q || !q.items || q.items.length === 0) {
-      try { localStorage.removeItem(K.queue); } catch (e) { /* sin acceso */ }
+      var existed = false;
+      try {
+        existed = localStorage.getItem(K.queue) !== null;
+        localStorage.removeItem(K.queue);
+      } catch (e) { /* sin acceso */ }
+      if (existed) logMsg('Cola borrada: ' + (reason || 'sin cuentas pendientes') + '.');
       return;
     }
     save(K.queue, q);
@@ -180,7 +186,7 @@
     if (!q) return null;
     var done = doneSet();
     q.items = q.items.filter(function (u) { return !done[u.toLowerCase()]; });
-    saveQueue(q);
+    saveQueue(q, 'todas sus cuentas figuran como cerradas en el historial');
     return q.items.length ? q : null;
   }
 
@@ -956,22 +962,63 @@
     return 'ok';
   }
 
-  // Solo lectura: abre el perfil y devuelve 'following' si todavia la seguis o
-  // 'not_following' si no. Se usa antes de retomar una accion interrumpida.
+  // Que selectores aparecen hoy en el perfil abierto, para decidir y para el log.
+  function profileEvidence() {
+    var main = document.querySelector(SEL.main);
+    var box = main ? main.querySelector(SEL.profileActions) : null;
+    return {
+      main: !!main,
+      box: !!box,
+      unfollow: !!(box && box.querySelector(SEL.unfollowButton)),
+      follow: !!(box && box.querySelector(SEL.followButton))
+    };
+  }
+
+  function evidenceText(ev) {
+    return 'profileActions ' + (ev.box ? 'sí' : 'no') + ', unfollowButton ' + (ev.unfollow ? 'sí' : 'no') +
+      ', followButton ' + (ev.follow ? 'sí' : 'no');
+  }
+
+  // Solo lectura: abre el perfil y decide con evidencia positiva.
+  // 'following' solo si aparece unfollowButton. 'not_following' solo si aparecen
+  // profileActions y followButton, sin unfollowButton. Cualquier otra cosa es error.
   async function readFollowState(handle) {
     var path = route('profile', handle);
     var at = '@' + handle.toLowerCase();
     var isHandleText = function (t) { return t.toLowerCase() === at; };
+    var t0 = Date.now();
+    logMsg('Revisando el perfil de @' + handle + ' antes de retomar la acción.');
     navigate(path);
-    await waitFor(function () {
-      if (!samePath(location.pathname, path)) return false;
-      var main = document.querySelector(SEL.main);
-      if (!main || !findExactText(main, isHandleText)) return false;
-      var b = profileButtons();
-      return b && (b.unfollow || b.follow);
-    }, T.navTimeout, 'el perfil de @' + handle);
-    var b = profileButtons();
-    return b.unfollow ? 'following' : 'not_following';
+    try {
+      await waitFor(function () {
+        if (!samePath(location.pathname, path)) return false;
+        var main = document.querySelector(SEL.main);
+        if (!main || !findExactText(main, isHandleText)) return false;
+        var ev = profileEvidence();
+        return ev.unfollow || (ev.box && ev.follow);
+      }, T.navTimeout, 'el perfil de @' + handle);
+    } catch (e) {
+      if (isControlError(e)) throw e;
+      var miss = profileEvidence();
+      var detail = 'Estado de @' + handle + ' sin evidencia suficiente tras ' + Math.round((Date.now() - t0) / 1000) +
+        ' s: ' + evidenceText(miss) + '. Selectores: ' + SEL.profileActions + ', ' + SEL.unfollowButton + ', ' + SEL.followButton + '.';
+      logError('readFollowState', detail);
+      throw new Error(detail);
+    }
+    var ev = profileEvidence();
+    var secs = Math.round((Date.now() - t0) / 1000);
+    if (ev.unfollow) {
+      logMsg('@' + handle + ': todavía la seguís. Evidencia: unfollowButton (' + SEL.unfollowButton + '). ' + secs + ' s.');
+      return 'following';
+    }
+    if (ev.box && ev.follow) {
+      logMsg('@' + handle + ': ya no la seguís. Evidencia: profileActions (' + SEL.profileActions + ') y followButton (' +
+        SEL.followButton + '), sin unfollowButton. ' + secs + ' s.');
+      return 'not_following';
+    }
+    var det = 'Estado de @' + handle + ' cambió durante la lectura: ' + evidenceText(ev) + '.';
+    logError('readFollowState', det);
+    throw new Error(det);
   }
 
   function buildTargets(mode) {
@@ -1009,15 +1056,26 @@
       var handle = q.items[0];
       setStatus('running', 'Procesando @' + handle + '. Quedan ' + q.items.length + '.');
 
-      var result;
+      // Se reinicia en cada vuelta: con var y sin valor, conservaria el de la cuenta anterior
+      // y se saltaria unfollowOne (bug de 1.0.6).
+      var result = null;
       var inAction = false;
       try {
-        // Si la pestana ya esta oculta, se pausa antes de empezar la accion.
+        // Si la pestana ya esta oculta o hubo Detener, se pausa antes de empezar la accion.
         guard();
+        // Hoja de confirmacion abierta de una accion anterior: no se toca nada.
+        // Con los selectores actuales no hay forma verificable de saber de que cuenta es.
+        if (document.querySelector(SEL.confirmUnfollow)) {
+          var sheetMsg = 'La hoja de confirmación de X sigue abierta (' + SEL.confirmUnfollow + ') antes de procesar @' + handle +
+            '. No se hace ningún click. Cerrala a mano y apretá Reanudar cola.';
+          logError('Hoja de confirmación', sheetMsg);
+          setStatus('paused_error', sheetMsg);
+          return;
+        }
         inAction = true;
         var wasInterrupted = q.interrupted && q.interrupted.toLowerCase() === handle.toLowerCase();
         if (wasInterrupted) {
-          // Accion interrumpida por pestana oculta: se revisa el perfil antes de repetirla.
+          // Accion interrumpida por una parada: se revisa el perfil antes de repetirla.
           var state = await withRetry('Revisar @' + handle, function () { return readFollowState(handle); });
           if (state === 'not_following') {
             result = 'ok';
@@ -1028,19 +1086,22 @@
         }
         if (!result) result = await withRetry('Dejar de seguir @' + handle, function () { return unfollowOne(handle); });
       } catch (e) {
-        if (e instanceof HiddenError) {
-          if (inAction) {
-            addHistory(handle, 'unfollow', 'interrupted', 'Pestaña oculta');
-            q.interrupted = handle;
-            saveQueue(q);
-            logMsg('@' + handle + ': acción interrumpida por pestaña oculta. Queda primera en la cola.');
-          }
+        // Parada en medio de una accion (pestana oculta, Detener o advertencia sin
+        // accion completada): queda interrumpida y se revisa al reanudar.
+        if (isControlError(e) && inAction && !(e instanceof WarnError && e.completed)) {
+          var why = e instanceof HiddenError ? 'Pestaña oculta' : (e instanceof StopError ? 'Detenido por el usuario' : 'Advertencia');
+          addHistory(handle, 'unfollow', 'interrupted', why);
+          q.interrupted = handle;
+          saveQueue(q);
+          logMsg('@' + handle + ': acción interrumpida (' + why.toLowerCase() + '). Queda primera en la cola.');
           throw e;
         }
+        if (e instanceof HiddenError) throw e;
         if (e instanceof WarnError && e.completed) {
           addHistory(handle, 'unfollow', 'ok');
           q.items.shift();
-          saveQueue(q);
+          delete q.interrupted;
+          saveQueue(q, 'cola terminada');
           markRow(handle);
           incSession();
           incDaily();
@@ -1057,7 +1118,7 @@
       addHistory(handle, 'unfollow', result);
       q.items.shift();
       delete q.interrupted;
-      saveQueue(q);
+      saveQueue(q, 'cola terminada');
       markRow(handle, result);
 
       if (result === 'ok') {
@@ -1136,7 +1197,10 @@
         setStatus('stopped_warning', 'Detenido por advertencia: ' + e.message + '. Revisá tu cuenta antes de reanudar.');
         logError(kind, e.message);
       } else if (e instanceof StopError) {
-        setStatus('stopped_user', 'Detenido por el usuario.');
+        // Detener pausa: la cola queda guardada y se reanuda con el boton.
+        setStatus('paused_user', kind === 'scan'
+          ? 'Escaneo detenido por el usuario. No se guardó resultado parcial.'
+          : 'Pausado por el usuario (Detener). La cola queda guardada. Apretá Reanudar cola para seguir.');
       } else if (e instanceof HiddenError) {
         // El escaneo se descarta sin guardar nada. La cola queda guardada para reanudar a mano.
         setStatus('paused_hidden', kind === 'scan' ? HIDDEN_MSG.scan : HIDDEN_MSG.queue);
@@ -1198,17 +1262,45 @@
     startProcess('queue', processQueue);
   }
 
+  // Reanuda desde cualquier pausa. Limpia los estados residuales antes de arrancar.
   function resumeQueue() {
-    if (run.active) return;
+    if (run.active) { logMsg('No se puede reanudar: hay un proceso activo.'); return; }
+    run.hiddenPause = false;
+    run.stopRequested = false;
+    clearNetFlag();
+    cancelDiscard();
     var vr = verifyReason(getScan());
     if (vr) { logMsg('No se puede reanudar: ' + vr); render(); return; }
-    if (!reconcileQueue()) { logMsg('No hay cola pendiente.'); render(); return; }
+    var q = reconcileQueue();
+    if (!q) { logMsg('No hay cola pendiente.'); render(); return; }
+    logMsg('Reanudando la cola: ' + q.items.length + ' cuentas pendientes' + (q.interrupted ? ', con @' + q.interrupted + ' interrumpida' : '') + '.');
     startProcess('queue', processQueue);
+  }
+
+  // Descartar pide confirmacion en el panel: el primer toque arma, el segundo borra.
+  var discardArmed = null;
+
+  function cancelDiscard() {
+    if (discardArmed) clearTimeout(discardArmed);
+    discardArmed = null;
+    if (ui.btnDiscard) ui.btnDiscard.textContent = 'Descartar cola';
+    if (ui.discardMsg) ui.discardMsg.textContent = '';
   }
 
   function discardQueue() {
     if (run.active) return;
-    saveQueue(null);
+    var q = getQueue();
+    if (!q || !q.items || !q.items.length) { cancelDiscard(); return; }
+    if (!discardArmed) {
+      ui.btnDiscard.textContent = 'Confirmar descarte';
+      ui.discardMsg.textContent = 'Se borran ' + q.items.length + ' cuentas pendientes. Tocá "Confirmar descarte" para seguir.';
+      discardArmed = setTimeout(cancelDiscard, 8000);
+      return;
+    }
+    cancelDiscard();
+    saveQueue(null, 'descartada por el usuario');
+    selected = {};
+    renderList();
     setStatus('idle', 'Cola descartada.');
   }
 
@@ -1330,7 +1422,8 @@
     stopped_warning: ['Detenido (advertencia)', 's-warn'],
     stopped_cap: ['Detenido (tope)', 's-warn'],
     stopped_user: ['Detenido (usuario)', 's-pause'],
-    paused_hidden: ['Pausado (pestaña oculta)', 's-pause']
+    paused_hidden: ['Pausado (pestaña oculta)', 's-pause'],
+    paused_user: ['Pausado (detenido por el usuario)', 's-pause']
   };
 
   function fmtTime(ms) {
@@ -1369,6 +1462,7 @@
     ui.btnResume = h('button', { 'class': 'b', text: 'Reanudar cola', on: { click: resumeQueue } });
     ui.btnDiscard = h('button', { 'class': 'b', text: 'Descartar cola', on: { click: discardQueue } });
     ui.queueInfo = h('span', { 'class': 'muted' });
+    ui.discardMsg = h('div', { 'class': 'muted', style: 'width:100%' });
 
     var s = getSettings();
     ui.inSession = h('input', { 'class': 'num', type: 'number', min: '1', value: String(s.perSession) });
@@ -1407,7 +1501,7 @@
       ]),
       ui.list,
       h('div', { 'class': 'sec' }, [ui.btnAll, ui.btnSel, ui.btnExc]),
-      h('div', { 'class': 'sec row' }, [ui.btnStop, ui.btnResume, ui.btnDiscard, ui.queueInfo]),
+      h('div', { 'class': 'sec row' }, [ui.btnStop, ui.btnResume, ui.btnDiscard, ui.queueInfo, ui.discardMsg]),
       h('div', { 'class': 'sec' }, [
         h('details', null, [
           h('summary', { text: 'Topes' }),
@@ -1562,7 +1656,9 @@
     ui.btnSel.disabled = busy || blocked || unverified;
     ui.btnExc.disabled = busy || blocked || unverified;
     ui.btnStop.disabled = !busy;
-    ui.btnResume.disabled = busy || blocked || unverified || !(q && q.items.length);
+    // Reanudar se habilita con una cola guardada y sin proceso activo. Si falta el
+    // preflight o la verificacion, el click lo explica en el log.
+    ui.btnResume.disabled = busy || !(q && q.items.length);
     ui.btnDiscard.disabled = busy || !(q && q.items.length);
   }
 
@@ -1576,7 +1672,7 @@
   // Si la pestana se cerro con un proceso en curso, el estado queda como detenido.
   var initial = getPState();
   if (initial.status === 'running' || initial.status === 'long_pause') {
-    setPState({ status: 'stopped_user', reason: 'El proceso anterior se interrumpió. La cola quedo guardada.' });
+    setPState({ status: 'paused_user', reason: 'El proceso anterior se cortó al cerrar o recargar la pestaña. La cola quedó guardada.' });
   }
   reconcileQueue();
 

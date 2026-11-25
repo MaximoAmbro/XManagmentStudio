@@ -2,15 +2,29 @@
 
 Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
 
-Versión actual: 1.0.6. Cubre el Módulo 1, Mi cuenta.
+Versión actual: 1.0.7. Cubre el Módulo 1, Mi cuenta.
 
-Estado: con la 1.0.6 queda cerrada la versión 1.0. La lógica de dejar de seguir se revisa en la 1.1.
+Estado: la versión 1.0 quedó cerrada con la 1.0.6. La 1.0.7 es un parche. La lógica de dejar de seguir se revisa en la 1.1.
 
 ## Acceso
 
 Página principal: https://maximoambro.github.io/XManagmentStudio/
 
-La versión 1.0.6 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+La versión 1.0.7 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+
+### Cambios en 1.0.7
+
+Si tenías el marcador de la 1.0.6, borralo y arrastrá el nuevo. Cualquier cambio en `config.js` o en el script obliga a arrastrar el marcador otra vez. Si la pestaña tenía abierto el panel de la 1.0.6, el marcador nuevo lo reemplaza solo.
+
+Importante si usaste la 1.0.6 con una cola de más de una cuenta: desde la segunda cuenta, esa versión registraba cada cuenta como hecha sin abrir su perfil ni hacer click, y la sumaba a los topes. La 1.0.7 lo corrige. Si corriste una cola así, revisá en X a quién seguís todavía antes de confiar en el historial.
+
+- "Detener" pausa la cola y la conserva. El estado queda como "Pausado (detenido por el usuario)" y la lista no se reinicia.
+- "Reanudar cola" se habilita siempre que haya una cola guardada y ningún proceso activo: después de "Detener", de una pausa por pestaña oculta, de un error o de una advertencia. Si falta el chequeo de sesión o la verificación del escaneo, el click lo explica en el log.
+- Solo "Descartar cola" borra una cola con cuentas pendientes, y pide confirmación en el panel: el primer toque cambia el botón a "Confirmar descarte". Una cola que termina sin cuentas se borra sola, como antes. Cada borrado queda en el log con su motivo.
+- Antes de retomar una acción interrumpida, el script revisa el perfil y decide solo con evidencia: "todavía la seguís" si aparece el botón de dejar de seguir, y "ya no la seguís" si aparecen el contenedor de acciones y el botón de seguir, sin el de dejar de seguir. Cualquier otra cosa es un error registrado, no un "ok". El log dice qué selector sirvió de evidencia.
+- Si la cuenta interrumpida ya no se sigue, aunque la hayas dejado a mano, se registra como hecha y suma a los topes.
+- Si al reanudar la hoja de confirmación de X sigue abierta, el script no toca nada: registra el error y deja la cola pausada. Cerrala a mano y apretá "Reanudar cola".
+- Una parada en medio de una acción ("Detener", pestaña oculta o advertencia) deja esa acción como interrumpida, y se revisa al reanudar.
 
 ### Cambios en 1.0.6
 
@@ -124,11 +138,13 @@ y abrí `http://localhost:8000`.
 
 El botón de la acción es la única confirmación. Al tocarlo, se arma la cola y arranca. Dejá la pestaña de X visible mientras corre. Si salís, la cola se pausa y queda guardada. Para seguir, volvé a la pestaña y apretá "Reanudar cola".
 
+Cualquier parada pausa la cola y la deja guardada: "Detener", la pestaña oculta, un error o una advertencia. La cola solo se borra con "Descartar cola" o cuando no le quedan cuentas.
+
 Para cada cuenta, el script abre su perfil, confirma que muestra "@cuenta", verifica que la seguís y que no tiene la marca "Te sigue", toca "Siguiendo" y confirma. Si la cuenta te sigue desde el escaneo, se omite.
 
 ### Barra de estado
 
-- Estado: inactivo, activo, pausado (pausa larga, error o pestaña oculta), detenido (advertencia, tope o usuario).
+- Estado: inactivo, activo, pausado (pausa larga, error, pestaña oculta o detenido por el usuario), detenido (advertencia o tope).
 - Sesión: acciones hechas en esta pestaña sobre el tope por sesión.
 - Hoy: acciones del día sobre el tope diario. Se reinicia con la fecha local.
 - Pausa larga en: acciones que faltan para la próxima pausa larga.
@@ -136,9 +152,9 @@ Para cada cuenta, el script abre su perfil, confirma que muestra "@cuenta", veri
 
 ### Botones de control
 
-- Detener: corta el proceso en curso. La cola queda guardada.
-- Reanudar cola: retoma la cola pendiente. Es la única forma de seguir después de una advertencia o de una pausa por pestaña oculta.
-- Descartar cola: borra la cola pendiente. El historial no se toca.
+- Detener: pausa el proceso en curso. En una cola, la deja guardada y el estado pasa a "Pausado (detenido por el usuario)". En un escaneo, el escaneo se descarta sin guardar resultado parcial.
+- Reanudar cola: retoma la cola guardada desde la cuenta pendiente. Se habilita siempre que haya una cola guardada y ningún proceso activo, venga de "Detener", de la pestaña oculta, de un error o de una advertencia. Volver a la pestaña no reanuda nada por sí solo.
+- Descartar cola: borra la cola pendiente. El primer toque pide confirmación en el panel ("Confirmar descarte"). El historial no se toca.
 
 ## Cómo funciona
 
