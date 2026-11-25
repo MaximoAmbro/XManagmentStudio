@@ -1,5 +1,5 @@
 /*
- * XManagmentStudio 1.0.2 - Modulo 1, Mi cuenta.
+ * XManagmentStudio 1.0.3 - Modulo 1, Mi cuenta.
  * Corre en x.com dentro de la sesion del usuario. Requiere window.XMS_CONFIG (config.js).
  * No usa la API de X ni credenciales. Lee y actua sobre el DOM.
  */
@@ -579,7 +579,103 @@
     return parseCount(link.textContent);
   }
 
-  async function scanList(kind, me) {
+  // Fusiona src en dst por handle: la marca "Te sigue" queda si aparecio en cualquier lectura
+  // y el nombre se completa si alguna lectura lo tiene. Devuelve cuantas cuentas nuevas sumo.
+  function mergeAccounts(dst, src, skipKey) {
+    var added = 0;
+    Object.keys(src).forEach(function (key) {
+      if (key === skipKey) return;
+      var s = src[key];
+      var d = dst[key];
+      if (!d) {
+        dst[key] = { handle: s.handle, name: s.name, followsYou: s.followsYou };
+        added++;
+        return;
+      }
+      if (s.followsYou) d.followsYou = true;
+      if (!d.name && s.name) d.name = s.name;
+    });
+    return added;
+  }
+
+  function isAtBottom() {
+    return window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 100;
+  }
+
+  function countMarks(map) {
+    return Object.keys(map).filter(function (k) { return map[k].followsYou; }).length;
+  }
+
+  function fmtTotal(total) { return total === null || total === undefined ? '?' : String(total); }
+
+  // Una pasada completa desde el inicio de la pagina. Lee en un mapa propio, para que las
+  // rondas sin cuentas nuevas se cuenten dentro de la pasada, y fusiona en all.
+  async function scanPass(pass, all, total, me) {
+    var tag = 'Pasada ' + pass;
+    var seen = {};
+    var skipKey = me.toLowerCase();
+    // Devuelve cuantas cuentas lleva leidas esta pasada.
+    var read = function () {
+      readCells(seen);
+      mergeAccounts(all, seen, skipKey);
+      return Object.keys(seen).length;
+    };
+    var progress = function () {
+      run.scanCount = Object.keys(all).length;
+      run.scanPass = pass;
+      render();
+    };
+    var count = function () { return Object.keys(all).length; };
+
+    window.scrollTo(0, 0);
+    await sleep(rand(T.readDelay));
+
+    var stall = 0;
+    var extra = 0;
+    var lastSeen = 0;
+    var reason = 'corte de seguridad (' + C.scan.maxRounds + ' rondas)';
+    for (var round = 1; round <= C.scan.maxRounds; round++) {
+      var nowSeen = read();
+      var added = nowSeen - lastSeen;
+      lastSeen = nowSeen;
+      progress();
+      if (added === 0) stall++; else stall = 0;
+      var atBottom = isAtBottom();
+      if (added === 0) {
+        logMsg(tag + ', ronda ' + round + ' sin cuentas nuevas: leídas ' + count() + ' de ' + fmtTotal(total) +
+          ', al final: ' + (atBottom ? 'sí' : 'no') + '.');
+      }
+      if (stall >= C.scan.maxStallRounds && atBottom) {
+        if (total !== null && count() < total && extra < C.scan.endRetries) {
+          extra++;
+          window.scrollTo(0, document.documentElement.scrollHeight);
+          await sleep(rand(C.scan.endWaitRange), 'Espera al final');
+          var got = read() - lastSeen;
+          lastSeen += got;
+          progress();
+          logMsg(tag + ', intento extra ' + extra + ' de ' + C.scan.endRetries + ': ' + got + ' cuentas nuevas en la pasada, leídas ' +
+            count() + ' de ' + fmtTotal(total) + '.');
+          if (got > 0) stall = 0;
+          continue;
+        }
+        if (total === null) reason = 'llegó al final, sin contador para comparar';
+        else if (count() >= total) reason = 'la cantidad coincide con el contador';
+        else reason = 'llegó al final y se agotaron los intentos extra';
+        break;
+      }
+      if (stall >= C.scan.maxStallRounds * 3) {
+        reason = C.scan.maxStallRounds * 3 + ' rondas sin cuentas nuevas sin llegar al final';
+        break;
+      }
+      window.scrollBy(0, Math.floor(window.innerHeight * C.scan.scrollFactor));
+      await sleep(rand(T.readDelay), 'Lectura');
+    }
+    read();
+    progress();
+    logMsg(tag + ' terminada: leídas ' + count() + ' de ' + fmtTotal(total) + '. Motivo: ' + reason + '.');
+  }
+
+  async function scanList(kind, me, total) {
     var path = route(kind, me);
     var label = kind;
     navigate(path);
@@ -595,24 +691,16 @@
       throw e;
     }
 
-    window.scrollTo(0, 0);
-    await sleep(rand(T.readDelay));
-
     var found = {};
-    var stall = 0;
-    for (var round = 0; round < C.scan.maxRounds; round++) {
-      var added = readCells(found);
-      run.scanCount = Object.keys(found).length;
-      run.scanLabel = label;
-      render();
-      if (added === 0) stall++; else stall = 0;
-      var atBottom = window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 100;
-      if (stall >= C.scan.maxStallRounds && atBottom) break;
-      if (stall >= C.scan.maxStallRounds * 3) break;
-      window.scrollBy(0, Math.floor(window.innerHeight * C.scan.scrollFactor));
-      await sleep(rand(T.readDelay), 'Lectura');
+    run.scanLabel = label;
+    await scanPass(1, found, total, me);
+    if (C.scan.secondPass) {
+      var before = Object.keys(found).length;
+      var marksBefore = countMarks(found);
+      await scanPass(2, found, total, me);
+      logMsg('Segunda pasada: ' + (Object.keys(found).length - before) + ' cuentas y ' +
+        (countMarks(found) - marksBefore) + ' marcas "Te sigue" que no estaban en la primera.');
     }
-    readCells(found);
     if (Object.keys(found).length === 0) logMsg(cellDiag(label));
     return found;
   }
@@ -639,8 +727,20 @@
   async function doScan() {
     var me = run.me;
     if (!me) throw new Error(PF_MSG.me);
-    logMsg('Escaneando following de @' + me + '.');
-    var following = await withRetry('Escaneo following', function () { return scanList('following', me); });
+    // El contador se lee antes de escanear: da el total para el progreso y los intentos extra.
+    run.scanLabel = 'contador';
+    logMsg('Leyendo el contador de Siguiendo de tu perfil.');
+    var profileCount = null;
+    try {
+      profileCount = await readFollowingCount(me);
+    } catch (e) {
+      if (e instanceof WarnError || e instanceof StopError) throw e;
+      logMsg('No se pudo leer el contador de Siguiendo: ' + e.message);
+    }
+    run.scanTotal = profileCount;
+    logMsg('Contador de Siguiendo: ' + fmtTotal(profileCount) + '. Escaneando following de @' + me + '.');
+
+    var following = await withRetry('Escaneo following', function () { return scanList('following', me, profileCount); });
     // La cuenta propia no cuenta como seguida.
     delete following[me.toLowerCase()];
 
@@ -653,17 +753,9 @@
       nonMutuals.push({ handle: f.handle, name: f.name });
     });
     nonMutuals.sort(function (a, b) { return a.handle.toLowerCase() < b.handle.toLowerCase() ? -1 : 1; });
-    logMsg('Following: ' + keys.length + ' cuentas, ' + mutuals + ' te siguen. Leyendo el contador de tu perfil.');
+    logMsg('Following: ' + keys.length + ' cuentas, ' + mutuals + ' te siguen.');
 
-    var profileCount = null;
-    try {
-      profileCount = await readFollowingCount(me);
-    } catch (e) {
-      if (e instanceof WarnError || e instanceof StopError) throw e;
-      logMsg('No se pudo leer el contador de Siguiendo: ' + e.message);
-    }
-
-    // Verificacion de cordura: sin las dos condiciones no se habilita ninguna accion.
+    // Verificacion de cordura, despues de las dos pasadas y de los intentos extra: sin las dos condiciones no se habilita ninguna accion.
     var reasons = [];
     if (mutuals === 0) reasons.push(VERIFY_MSG.noMarks);
     if (profileCount === null) reasons.push(VERIFY_MSG.noCount);
@@ -866,6 +958,8 @@
     waitLabel: '',
     scanCount: 0,
     scanLabel: '',
+    scanTotal: null,
+    scanPass: 0,
     me: null
   };
 
@@ -908,6 +1002,9 @@
       run.kind = '';
       run.waitUntil = 0;
       run.scanCount = 0;
+      run.scanTotal = null;
+      run.scanPass = 0;
+      run.scanLabel = '';
       releaseLock();
       render();
     }
@@ -952,16 +1049,56 @@
   /* ------------------------------------------------------------------ */
 
   var ui = {};
-  var logLines = [];
+
+  // Log persistente: ultimas logMax lineas en localStorage (xms.log).
+  function loadLog() {
+    var l = load(K.log, []);
+    return Array.isArray(l) ? l.slice(-C.logMax) : [];
+  }
+
+  var logLines = loadLog();
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
 
   function logMsg(text) {
     var d = new Date();
-    var ts = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') + ':' + String(d.getSeconds()).padStart(2, '0');
-    logLines.push(ts + '  ' + text);
-    if (logLines.length > 60) logLines.shift();
-    if (ui.log) {
-      ui.log.textContent = logLines.slice(-8).join('\n');
-      ui.log.scrollTop = ui.log.scrollHeight;
+    var ts = pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + ' ' +
+      pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    var line = ts + '  ' + text;
+    // Se relee antes de escribir por si otra pestana agrego lineas.
+    logLines = loadLog();
+    logLines.push(line);
+    if (logLines.length > C.logMax) logLines = logLines.slice(logLines.length - C.logMax);
+    // Sin save(): si falla, save llama a logMsg y entraria en bucle.
+    try { localStorage.setItem(K.log, JSON.stringify(logLines)); } catch (e) { /* sin espacio o sin acceso */ }
+    renderLog();
+  }
+
+  function renderLog() {
+    if (!ui.log) return;
+    ui.log.textContent = logLines.join('\n');
+    ui.log.scrollTop = ui.log.scrollHeight;
+  }
+
+  function copyLog() {
+    var text = loadLog().join('\n');
+    var fail = function () {
+      try {
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        var range = document.createRange();
+        range.selectNodeContents(ui.log);
+        sel.addRange(range);
+      } catch (e) { /* sin seleccion */ }
+      ui.copyMsg.textContent = 'No se pudo copiar. Seleccioná el texto del log y apretá Ctrl+C.';
+    };
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) { fail(); return; }
+      navigator.clipboard.writeText(text).then(function () {
+        ui.copyMsg.textContent = 'Log copiado.';
+      }, fail);
+    } catch (e) {
+      fail();
     }
   }
 
@@ -981,7 +1118,7 @@
   var CSS = [
     ':host{all:initial}',
     '*{box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}',
-    '.p{position:fixed;top:12px;right:12px;width:' + C.ui.width + 'px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);display:flex;flex-direction:column;background:#000;color:#E7E9EA;border:1px solid #1E3558;border-radius:10px;font-size:13px;line-height:1.4;box-shadow:0 8px 32px rgba(0,0,0,.6);overflow:hidden}',
+    '.p{position:fixed;top:12px;right:12px;width:' + C.ui.width + 'px;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);display:flex;flex-direction:column;background:#000;color:#E7E9EA;border:1px solid #1E3558;border-radius:10px;font-size:13px;line-height:1.4;box-shadow:0 8px 32px rgba(0,0,0,.6);overflow-x:hidden;overflow-y:auto}',
     '.hd{display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:#0B1F3A;border-bottom:1px solid #1E3558}',
     '.hd b{font-size:14px;font-weight:600;letter-spacing:.2px}',
     '.hd span{color:#8FA3BF;font-size:12px;margin-left:6px}',
@@ -1008,7 +1145,8 @@
     '.list .done{opacity:.35;text-decoration:line-through}',
     '.empty{padding:12px;color:#8FA3BF}',
     'input.num{width:64px;background:#000;color:#E7E9EA;border:1px solid #23406B;border-radius:4px;padding:4px 6px;font-size:12px}',
-    'pre{margin:0;padding:8px 12px;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#8FA3BF;white-space:pre-wrap;max-height:110px;overflow-y:auto;background:#030a14}',
+    'pre{margin:0;padding:8px 12px;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#8FA3BF;white-space:pre-wrap;flex-shrink:0;min-height:120px;max-height:35vh;overflow-y:auto;background:#030a14;user-select:text}',
+    '.loghd{display:flex;align-items:center;gap:8px;padding:6px 12px;border-top:1px solid #16263F}',
     'details summary{cursor:pointer;color:#8FA3BF;font-size:12px}'
   ].join('');
 
@@ -1063,6 +1201,8 @@
     ui.inDay = h('input', { 'class': 'num', type: 'number', min: '1', value: String(s.perDay) });
 
     ui.log = h('pre');
+    ui.copyMsg = h('span', { 'class': 'muted' });
+    ui.btnCopy = h('button', { 'class': 'b', text: 'Copiar log', on: { click: copyLog } });
 
     var panel = h('div', { 'class': 'p' }, [
       h('div', { 'class': 'hd' }, [
@@ -1103,11 +1243,14 @@
           ])
         ])
       ]),
+      h('div', { 'class': 'loghd' }, [ui.btnCopy, ui.copyMsg]),
       ui.log
     ]);
     root.appendChild(panel);
     ui.host = host;
     document.body.appendChild(host);
+    // Muestra las lineas guardadas, con las mas recientes abajo.
+    renderLog();
   }
 
   function saveSettings() {
@@ -1204,7 +1347,9 @@
 
     var scan = getScan();
     if (run.active && run.kind === 'scan') {
-      ui.scanInfo.textContent = 'Leyendo ' + run.scanLabel + ': ' + run.scanCount + ' cuentas.';
+      ui.scanInfo.textContent = run.scanLabel === 'contador'
+        ? 'Leyendo el contador de Siguiendo.'
+        : 'Leídas ' + run.scanCount + ' de ' + fmtTotal(run.scanTotal) + (run.scanPass ? ' (pasada ' + run.scanPass + ')' : '') + '.';
     } else if (scan) {
       ui.scanInfo.textContent = '@' + scan.me + '. Following ' + scan.followingCount +
         (typeof scan.mutualsCount === 'number' ? ', te siguen ' + scan.mutualsCount : '') +

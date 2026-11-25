@@ -2,13 +2,25 @@
 
 Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
 
-Versión actual: 1.0.2. Cubre el Módulo 1, Mi cuenta.
+Versión actual: 1.0.3. Cubre el Módulo 1, Mi cuenta.
 
 ## Acceso
 
 Página principal: https://maximoambro.github.io/XManagmentStudio/
 
-La versión 1.0.2 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+La versión 1.0.3 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde esa página.
+
+### Cambios en 1.0.3
+
+Si tenías el marcador de la 1.0.2, borralo y arrastrá el nuevo. Cualquier cambio en `config.js` o en el script obliga a arrastrar el marcador otra vez. Si la pestaña tenía abierto el panel de la 1.0.2, el marcador nuevo lo reemplaza solo.
+
+- El contador "Siguiendo" de tu perfil se lee antes de escanear. Mientras escanea, el panel muestra "Leídas X de Y".
+- Al llegar al final de la lista, si faltan cuentas frente al contador, el escaneo hace hasta 4 intentos extra: vuelve al final, espera entre 5 y 10 segundos y relee (`scan.endRetries` y `scan.endWaitRange`).
+- Segunda pasada: terminada la primera lectura, vuelve al inicio y recorre la lista otra vez. Si una cuenta tuvo la marca "Te sigue" en cualquiera de las dos pasadas, queda como mutual. Se desactiva con `scan.secondPass: false`.
+- La verificación de cordura se evalúa después de las dos pasadas y de los intentos extra.
+- El log queda guardado en `xms.log` (últimas 200 líneas, `logMax`) y el panel lo muestra al cargar, con más alto y scroll propio. Cada línea lleva día, mes y hora.
+- Botón "Copiar log": copia el log guardado completo al portapapeles.
+- El log registra cada ronda sin cuentas nuevas, cada intento extra y el motivo por el que terminó cada pasada.
 
 ### Cambios en 1.0.2
 
@@ -65,7 +77,7 @@ y abrí `http://localhost:8000`.
 
 1. Entrá a x.com con tu sesión iniciada.
 2. Hacé clic en el marcador. Se abre un panel a la derecha con el chequeo de sesión. Si dice "Sesión detectada: @tuusuario.", podés seguir. Si muestra otro mensaje, resolvé lo que indica; los botones quedan bloqueados hasta entonces.
-3. Tocá "Escanear following". El script recorre `/{usuario}/following` con desplazamiento automático hasta el final y después abre tu perfil para leer el contador "Siguiendo". No lee la lista de followers. Dejá la pestaña abierta y visible.
+3. Tocá "Escanear following". El script abre tu perfil para leer el contador "Siguiendo" y después recorre `/{usuario}/following` dos veces, con desplazamiento automático hasta el final. No lee la lista de followers. Dejá la pestaña abierta y visible. El panel muestra "Leídas X de Y" mientras avanza.
 4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no tienen la marca "Te sigue". Debajo aparece si el escaneo quedó verificado o el motivo por el que no. Sin verificación, las acciones no se habilitan.
 5. Marcá cuentas con los checkboxes. Hay botones para seleccionar y deseleccionar todo, y un contador de seleccionadas.
 6. Elegí una acción:
@@ -131,6 +143,7 @@ Todo se guarda en el `localStorage` de x.com:
 | `xms.scan` | último escaneo |
 | `xms.state` | estado del proceso y contador de pausa larga |
 | `xms.errors` | errores registrados |
+| `xms.log` | últimas líneas del log del panel |
 
 El contador de sesión va en `sessionStorage`. Se reinicia al abrir una pestaña nueva, no al recargar.
 
@@ -169,7 +182,8 @@ Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores
 - Depende del DOM de X. Si X cambia los selectores, el escaneo o la acción fallan hasta actualizar `config.js`.
 - Los textos "Te sigue" y "Siguiendo" dependen del idioma de la interfaz. Si usás otro idioma, agregá la marca en `followsYouLabels`.
 - Si el contador del perfil está abreviado (por ejemplo "1,2 mil"), no coincide con lo leído y el escaneo queda sin verificar.
-- El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos.
+- El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos por pasada, más hasta 4 esperas de 5 a 10 segundos por pasada si faltan cuentas al final.
+- Si algo falla en un escaneo, tocá "Copiar log" y guardá el texto. Ahí figura por qué terminó cada pasada.
 - La detección de 429 se apoya en observar `fetch` y `XMLHttpRequest` de la página. Si X cambia cómo hace sus llamadas, queda la detección por mensajes y redirecciones.
 - Si X deja de mostrar la marca "Te sigue" en una cuenta que sí te sigue, esa cuenta aparece como non-mutual. El chequeo en su perfil antes de dejar de seguir la vuelve a revisar.
 

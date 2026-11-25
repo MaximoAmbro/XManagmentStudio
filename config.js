@@ -7,7 +7,7 @@
  * Tiempos en milisegundos salvo que el nombre diga otra cosa.
  */
 window.XMS_CONFIG = {
-  version: '1.0.2',
+  version: '1.0.3',
 
   // Ritmo y pausas
   timing: {
@@ -34,7 +34,10 @@ window.XMS_CONFIG = {
   scan: {
     maxStallRounds: 5,       // rondas sin cuentas nuevas al final de la lista
     maxRounds: 3000,         // corte de seguridad
-    scrollFactor: 0.85       // fraccion de la altura de la ventana por desplazamiento
+    scrollFactor: 0.85,      // fraccion de la altura de la ventana por desplazamiento
+    endRetries: 4,           // intentos extra al llegar al final si faltan cuentas
+    endWaitRange: { min: 5000, max: 10000 }, // espera entre intentos extra
+    secondPass: true         // segunda pasada completa para releer marcas y cuentas
   },
 
   // Rutas de x.com. {user} se reemplaza por el nombre de usuario.
@@ -131,11 +134,13 @@ window.XMS_CONFIG = {
     state: 'xms.state',
     errors: 'xms.errors',
     lock: 'xms.lock',
-    session: 'xms.session'   // sessionStorage
+    session: 'xms.session',  // sessionStorage
+    log: 'xms.log'
   },
 
   lockStaleMs: 120000,       // un bloqueo sin latido por mas de esto se considera abandonado
   historyMax: 5000,
+  logMax: 200,               // lineas del log que se guardan
   errorsMax: 200,
 
   ui: {
