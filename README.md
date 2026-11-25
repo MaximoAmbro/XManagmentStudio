@@ -1,0 +1,161 @@
+# XManagmentStudio
+
+Herramienta para revisar y dejar de seguir, en X, las cuentas que no te siguen de vuelta. Corre desde tu propia sesión en x.com mediante un bookmarklet. No usa la API de X, tokens ni credenciales.
+
+Versión actual: 1.0. Cubre el Módulo 1, Mi cuenta.
+
+## Acceso
+
+La versión 1.0 tiene acceso abierto. Cualquiera puede instalar el bookmarklet desde la página de GitHub Pages del proyecto.
+
+## Advertencia de riesgo
+
+Usar automatizaciones puede contravenir las reglas de X y provocar restricciones o el cierre de la cuenta. Los valores por defecto (pausas largas, 20 acciones por sesión, 100 por día) reducen el riesgo pero no lo eliminan. Si X muestra una advertencia, el proceso se detiene. Antes de reanudar, revisá tu cuenta y esperá.
+
+Usalo bajo tu responsabilidad.
+
+## Instalación
+
+1. Abrí la página de GitHub Pages del proyecto.
+2. Mostrá la barra de marcadores del navegador (Ctrl+Shift+B en Chrome y Edge).
+3. Arrastrá el botón "XManagmentStudio" a la barra.
+
+La página arma el bookmarklet con el contenido de `config.js` y `xmanagmentstudio.js`. El código queda entero dentro del marcador, así que no carga nada externo desde x.com. Si cambiás algo en `config.js`, volvé a arrastrar el marcador para tomar los valores nuevos.
+
+### Alternativa: consola
+
+Si tu navegador no ejecuta bookmarklets en x.com:
+
+1. Copiá el código desde la misma página ("Copiar código").
+2. En x.com, abrí la consola (F12, pestaña Console).
+3. Pegá el código y apretá Enter. Chrome puede pedir que escribas `allow pasting` primero.
+
+### Probar en local
+
+`index.html` lee los scripts con `fetch`, así que no funciona abierto como archivo. Levantá un servidor estático en la carpeta del proyecto, por ejemplo:
+
+```
+python -m http.server 8000
+```
+
+y abrí `http://localhost:8000`.
+
+## Uso
+
+1. Entrá a x.com con tu sesión iniciada.
+2. Hacé clic en el marcador. Se abre un panel a la derecha.
+3. Tocá "Escanear following y followers". El script recorre `/{usuario}/following` y después `/{usuario}/followers`, con desplazamiento automático hasta el final. Dejá la pestaña abierta y visible.
+4. Al terminar, el panel muestra los non-mutuals: cuentas que seguís y que no te siguen.
+5. Marcá cuentas con los checkboxes. Hay botones para seleccionar y deseleccionar todo, y un contador de seleccionadas.
+6. Elegí una acción:
+   - Dejar de seguir a todos los non-mutuals.
+   - Dejar de seguir a los seleccionados.
+   - Dejar de seguir a todos menos los seleccionados.
+
+El botón de la acción es la única confirmación. Al tocarlo, se arma la cola y arranca.
+
+Para cada cuenta, el script abre su perfil, verifica que la seguís y que no te sigue, toca "Siguiendo" y confirma. Si la cuenta te sigue desde el escaneo, se omite.
+
+### Barra de estado
+
+- Estado: inactivo, activo, pausado (pausa larga o error), detenido (advertencia, tope o usuario).
+- Sesión: acciones hechas en esta pestaña sobre el tope por sesión.
+- Hoy: acciones del día sobre el tope diario. Se reinicia con la fecha local.
+- Pausa larga en: acciones que faltan para la próxima pausa larga.
+- Espera: tiempo restante de la espera en curso.
+
+### Botones de control
+
+- Detener: corta el proceso en curso. La cola queda guardada.
+- Reanudar cola: retoma la cola pendiente. Es la única forma de seguir después de una advertencia.
+- Descartar cola: borra la cola pendiente. El historial no se toca.
+
+## Cómo funciona
+
+### Ritmo
+
+| Parámetro | Valor por defecto |
+|---|---|
+| Espera entre acciones de escritura | 35 a 85 segundos, aleatorio |
+| Espera entre lecturas del escaneo | 1 a 5 segundos, aleatorio |
+| Pausa larga | cada 8 a 12 acciones, de 5 a 15 minutos |
+| Tope por sesión | 20 acciones |
+| Tope por día | 100 acciones |
+
+Los topes se pueden cambiar desde el panel (sección "Topes"). El resto se cambia en `config.js`.
+
+Hay un solo proceso activo a la vez, también entre pestañas.
+
+### Detección de advertencias
+
+El proceso se detiene de inmediato y guarda la cola si detecta:
+
+- una respuesta HTTP 429 o un error de red en las llamadas a la API interna de X que hace la página mientras corre el proceso;
+- un mensaje de límite de acciones o de error genérico en la interfaz de X;
+- el botón de dejar de seguir o la confirmación deshabilitados;
+- una redirección a inicio de sesión, verificación o cuenta bloqueada.
+
+Solo se reanuda a mano.
+
+### Persistencia
+
+Todo se guarda en el `localStorage` de x.com:
+
+| Clave | Contenido |
+|---|---|
+| `xms.history` | historial de acciones: cuenta, acción, resultado, fecha y hora |
+| `xms.queue` | cola pendiente |
+| `xms.daily` | contador del día |
+| `xms.settings` | topes elegidos en el panel |
+| `xms.scan` | último escaneo |
+| `xms.state` | estado del proceso y contador de pausa larga |
+| `xms.errors` | errores registrados |
+
+El contador de sesión va en `sessionStorage`. Se reinicia al abrir una pestaña nueva, no al recargar.
+
+Una cuenta registrada como hecha en el historial no se vuelve a procesar. Cada operación fallida se reintenta hasta 2 veces con espera creciente (15 y 30 segundos). Si sigue fallando, el proceso se pausa y el error queda registrado. La cuenta queda primera en la cola.
+
+El historial se escribe antes de sacar la cuenta de la cola. Si algo corta entre los dos pasos, la cola se limpia contra el historial en la siguiente vuelta.
+
+## Configuración
+
+`config.js` concentra:
+
+- selectores del DOM de X;
+- rutas de following, followers y perfil;
+- textos que cuentan como advertencia, en español e inglés;
+- rutas que cuentan como redirección a verificación;
+- rangos de pausas, reintentos y tiempos de espera;
+- topes por defecto;
+- claves de almacenamiento.
+
+Cuando X cambia su interfaz, lo normal es que solo haya que tocar los selectores.
+
+## Archivos
+
+| Archivo | Función |
+|---|---|
+| `index.html` | página de GitHub Pages: bookmarklet y código para la consola |
+| `xmanagmentstudio.js` | lógica y panel flotante |
+| `config.js` | selectores, pausas, topes y claves |
+| `README.md` | este documento |
+
+## Limitaciones conocidas
+
+- Depende del DOM de X. Si X cambia los `data-testid`, el escaneo o la acción fallan hasta actualizar `config.js`.
+- El escaneo de cuentas grandes tarda. Con 2000 cuentas seguidas, cuenta varios minutos por lista.
+- La detección de 429 se apoya en observar `fetch` y `XMLHttpRequest` de la página. Si X cambia cómo hace sus llamadas, queda la detección por mensajes y redirecciones.
+- X no siempre muestra la lista completa de followers. Por eso, una cuenta que en tu lista de following figura con "Te sigue" no se toma como non-mutual aunque no aparezca en followers.
+
+## Roadmap
+
+| Versión | Alcance |
+|---|---|
+| 1.0 | Módulo 1, Mi cuenta: escaneo de following y followers, non-mutuals, acciones masivas con selección. |
+| 1.1 | Módulo 2, Cuenta ajena: scrapeo de followers de un @usuario y seguir a N cuentas con tope. |
+| 1.2 | Módulo 3, Mis tweets: scrapeo de tweets propios (destacados o más recientes) y de sus interacciones directas (likes, retweets y citas), agrupadas por nombre de usuario. Seguir a todos, a los seleccionados o a N. |
+| 2.0 | Traducción a español, inglés, portugués, turco, indonesio, árabe (con soporte RTL) e hindi. |
+| 2.1 | Control de acceso controlado por el administrador. |
+| 3.0 | Funcionamiento continuo y rápido, sin provocar el cierre de la cuenta por scrapeo sospechoso. |
+
+La 3.0 está sin definir. Velocidad y bajo riesgo van en direcciones opuestas, y todavía no hay un método para tener las dos.
